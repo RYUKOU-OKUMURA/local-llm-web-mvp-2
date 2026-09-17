@@ -14,3 +14,5 @@ state.json
 *.db
 *.db-wal
 *.db-shm
+references/
+
