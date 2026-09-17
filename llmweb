@@ -1,0 +1,19 @@
+#!/bin/bash
+# No install/root/network changes here; forwards to the requested command.
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PY="$HOME/Library/Application Support/local-llm-web/venv/bin/python"
+if [ -x "$VENV_PY" ]; then
+  PYTHON="$VENV_PY"
+else
+  PYTHON="$(command -v python3 || true)"
+fi
+if [ -z "$PYTHON" ]; then
+  echo 'Python 3が必要です。READMEの事前準備を確認してください。' >&2
+  exit 1
+fi
+"$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' || {
+  echo '起動用Pythonは3.9以上が必要です。Open WebUI本体には専用Python 3.11を導入します。' >&2
+  exit 1
+}
+exec "$PYTHON" "$HERE/llmweb.py" "$@"

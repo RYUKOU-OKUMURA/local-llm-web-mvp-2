@@ -1,0 +1,19 @@
+local-llm-web-mvp 0.1.1
+Tested: 2026-09-16
+Environment: package-level unit tests (Linux harness; macOS integration remains pending)
+
+Command:
+  python -m unittest discover -s tests -v
+
+Result:
+  Ran 106 tests
+  OK
+
+Added in 0.1.1:
+- Existing Ollama on 127.0.0.1:11434 is accepted for validation/reuse.
+- Wildcard existing Ollama listeners are rejected.
+- IPv6 wildcard existing Ollama listeners are rejected.
+- Existing Ollama ownership is not assumed from PID.
+
+Important:
+This is not a substitute for macOS integration / acceptance testing.

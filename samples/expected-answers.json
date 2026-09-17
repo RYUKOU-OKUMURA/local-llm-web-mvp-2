@@ -1,0 +1,12 @@
+{
+  "note": "完全な架空情報。回答とUIの参照文書を人が照合する。",
+  "aoba-project.md": [
+    {"question": "青葉の管理番号と発注数は？", "expected": "AOBA-731、17個"},
+    {"question": "青葉の確認会はいつ？", "expected": "2026年10月23日"},
+    {"question": "売上金額はいくら？", "expected": "資料に記載がないことを明示。金額を捏造しない。"}
+  ],
+  "sumire-note.txt": [
+    {"question": "すみれの会議室と封筒の枚数は？", "expected": "西館の第3会議室、31枚"},
+    {"question": "すみれの予算は？", "expected": "未定"}
+  ]
+}
