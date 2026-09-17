@@ -1,175 +1,322 @@
-# Local LLM Web UI 構築手順書
+# Local LLM Web UI 構築・運用完全ガイド
 
-> Ollama + Open WebUI + Tailscale Serve を macOS 上で直接動かし、Mac mini をローカルLLMサーバーとして利用するための構築ガイド
+> Ollama + Open WebUI + Tailscale Serve を macOS 上で直接動かし、Mac mini を完全プライベートなローカルLLMサーバーとして利用するためのガイドブック
 
-- 対象: macOS / Apple Silicon を中心とした個人利用
-- 想定構成: Ollama は macOS ネイティブ、Open WebUI は専用 Python 環境、遠隔アクセスは Tailscale Serve
+- 対象: macOS / Apple Silicon を中心とした個人・チーム利用
+- 想定構成: Ollama（macOS ネイティブ） + Open WebUI（専用 Python 環境） + Tailscale Serve（専用 HTTPS 経路）
 - 本書の対象バージョン: `local-llm-web-mvp 0.1.x`
 - 更新日: 2026-09-17
 
 ---
 
-## 1. このプロジェクトの目的
+## 🧭 本書の構成と読み方
 
-このプロジェクトは、Mac mini 上で動くローカルLLMを、MacBook・スマートフォン・タブレットなどからブラウザで使えるようにするための導入・運用ラッパーです。
+あなたの役割や目的に応じて、以下のパートからお読みください。
 
-新しいチャットUIを独自実装するのではなく、UIには **Open WebUI**、モデル実行には **Ollama**、遠隔アクセスには **Tailscale Serve** を使います。
-
-狙いは次の3点です。
-
-1. Ollama のAPIをインターネットへ直接公開しない
-2. Open WebUIだけをTailnet内へHTTPS公開する
-3. 既存のサービスやポートを勝手に停止・上書きせず、安全側に失敗する
-
-本プロジェクトは、Open WebUI・Ollama・Tailscaleそのものを再配布する製品ではありません。各ソフトウェアは利用者のMacに公式配布元から導入されます。
+| あなたの目的 | おすすめの読み方 |
+|---|---|
+| **初めて導入する・非エンジニアの方** | 👉 **[【パート1】🔰 はじめての導入ガイド（クリック操作編）](#パート1-はじめての導入ガイド非エンジニア向けクリック操作編)**<br>専門用語なしで、マウス操作と番号入力だけで動かす最短手順を解説しています。 |
+| **用語の意味や仕組みをざっくり知りたい** | 👉 **[1.5 やさしい用語解説（これだけ知っていれば安心）](#15-やさしい用語解説これだけ知っていれば安心)** |
+| **動かない・エラーが出たとき** | 👉 **[1.6 よくあるトラブル・つまずき解消Q&A](#16-よくあるトラブルつまずき解消qa非エンジニア向け)** |
+| **CLIで細かく制御したい・技術仕様を知りたい** | 👉 **[【パート2】🛠️ 詳細技術仕様・コマンド操作マニュアル（エンジニア向け）](#パート2-詳細技術仕様コマンド操作マニュアルエンジニア向け)**<br>コマンドライン引数、アーキテクチャ、LaunchAgent、セキュリティ監査項目を網羅しています。 |
 
 ---
 
-## 2. 全体アーキテクチャ
+# 【パート1】🔰 はじめての導入ガイド（非エンジニア向け・クリック操作編）
+
+## 1.1 このシステムの全体イメージ
+
+このプロジェクトは、自宅や職場の **Mac mini** を「プライベートなAIサーバー」にして、手元の **MacBook・iPhone・iPad** からいつでもChatGPT感覚でAIを使えるようにする仕組みです。
+
+```text
+【手元の端末】                      【サーバー（Mac mini）】
+MacBook / iPhone / iPad              自宅や職場に設置
+   │                                     │
+   │  安全な専用トンネル（Tailscale）      │
+   └────────────────────────────────────►├─ 画面表示（Open WebUI）
+        外からでも安全につながる             │      │
+                                         │      ▼ 内部でやりとり
+                                         └─ AIの頭脳（Ollama）
+                                                完全にお手元のMac mini内だけで処理！
+```
+
+### 3つの安心ポイント
+1. **情報が外部に漏れない**：質問した内容やアップロードした文書は、外部企業（OpenAIやGoogle等）に一切送信されず、すべてお手元の Mac mini の中だけで処理されます。
+2. **安全な専用トンネル**：インターネット全体に公開するのではなく、あなた自身の専用ネットワーク（Tailscale）経由でのみ繋がるため、部外者から勝手にアクセスされる心配がありません。
+3. **既存の環境を壊さない**：すでに動いている他のアプリやネットワーク設定を勝手に消したり書き換えたりしません。
+
+---
+
+## 1.2 準備するもの（4点チェック）
+
+作業を始める前に、**Mac mini** に以下が用意されているかご確認ください。
+
+| 必要なもの | 状態の確認方法 / 入手方法 |
+|---|---|
+| **① Mac mini 本体** | M1, M2, M3, M4 などの Apple Silicon 搭載モデル推奨（メモリ16GB以上を推奨） |
+| **② Ollama（オラマ）** | AIの頭脳となるアプリです。<br>👉 公式サイト [ollama.com](https://ollama.com/) からダウンロードしてインストールし、一度起動しておきます。 |
+| **③ Tailscale（テイルスケール）** | 外出先や手元の端末と安全につなぐVPNアプリです。<br>👉 Mac App Store または [公式サイト](https://tailscale.com/) からインストールし、ログインして `Connected`（接続中）にしておきます。 |
+| **④ uv（ユーブイ）** | 必要なPython環境を自動構築する高速ツールです。<br>👉 まだ入っていない場合は、Mac mini の「ターミナル」アプリを開き、以下を貼り付けて Enter を押すだけで数秒で入ります：<br>`curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+
+---
+
+## 1.3 `setup.command` で進める導入手順（かんたん8ステップ）
+
+難しいコマンドを入力する必要はありません。  
+フォルダ内にある **`setup.command`** をダブルクリックして、画面に表示される番号を順番に入力していくだけで完成します。
+
+### ステップ 0：フォルダを開いて起動する
+1. 配布されたこのフォルダを、サーバーにする **Mac mini** のデスクトップなどに置きます。
+2. フォルダの中にある **`setup.command`** をダブルクリックします。
+
+> 💡 **「開発元が未確認のため開けません」と表示された場合**  
+> `setup.command` を「副ボタン（右クリック、または二本指タップ）」して、メニューから **「開く」** を選んでください。確認画面が出たらもう一度「開く」をクリックすると正常に起動します。
+
+起動すると、黒い画面（ターミナル）に以下のメニューが表示されます。
+
+```text
+個人用ローカルLLM Web環境 — 導入メニュー
+必ずサーバーにするMac miniで実行してください。MacBook側の導入は不要です。
+既存のOpenClaw・443番・Dockerは変更対象にしません。
+
+0 現状確認（読み取りだけ）
+1 専用Python / WebUIの導入
+2 Ollamaを起動
+3 試験用モデルを取得
+4 WebUIを起動（初回はMac mini内だけ）
+5 管理者作成後、安全設定を反映
+6 Tailscaleへ専用HTTPS経路を追加
+7 診断
+8 バックアップ
+q 終了
+番号: 
+```
+
+ここからは、キーボードで半角数字を押して `Enter` を押していきます。
+
+---
+
+### ステップ 1：`0` を押して現状確認（健康診断）
+- 半角で `0` と入力して `Enter` を押します。
+- Mac mini のOS、メモリ、ポート（通信番号）が空いているかをチェックします。
+- **※何も変更しない安全な読み取り専用チェックです。**
+- 画面に「合格」的な表示が出ればOKです。
+
+---
+
+### ステップ 2：`1` を押して初期セットアップ
+- 半角で `1` と入力して `Enter` を押します。
+- Open WebUI専用の安全なPython環境が自動的に作成されます。
+- 画面に処理完了が表示されたら次へ進みます。
+
+---
+
+### ステップ 3：`2` を押してOllamaを起動
+- 半角で `2` と入力して `Enter` を押します。
+- AIエンジン（Ollama）が待機状態になります。
+
+---
+
+### ステップ 4：`3` を押してモデルをダウンロード
+- 半角で `3` と入力して `Enter` を押します。
+- お試し用のAIモデル（Qwen3 など）と文書検索用モデルを自動でダウンロードします。
+- ※インターネット回線速度によって数分程度かかります。完了するまでお待ちください。
+
+---
+
+### ステップ 5：`4` を押してWeb画面を起動
+- 半角で `4` と入力して `Enter` を押します。
+- Mac mini の内部だけで、ChatGPTのようなWeb画面（Open WebUI）が立ち上がります。
+
+---
+
+### ステップ 6：ブラウザで「最初の管理者」を作る（重要！）
+ここだけ、Mac mini のブラウザ（Safari や Chrome）を操作します。
+
+1. **Mac mini のブラウザ** で次のアドレスを開きます：  
+   👉 `http://127.0.0.1:3000`
+2. Open WebUI の画面が表示され、「アカウント登録（Sign Up）」画面が出ます。
+3. あなたの **お名前・メールアドレス・パスワード** を入力して登録します。
+   - ※この **最初にお手元で登録した1名だけが「管理者」** になります。
+   - ※パスワードは忘れないように安全に保管してください。
+4. チャット画面に入れたら、ブラウザはいったんそのままでメニュー画面に戻ります。
+
+---
+
+### ステップ 7：`5` を押して安全設定をロックする
+- `setup.command` の画面に戻り、半角で `5` と入力して `Enter` を押します。
+- 画面で **管理者のメールアドレス** と **パスワード** を尋ねられますので入力します。  
+  （※セキュリティ上、パスワード入力中は画面に文字が表示されませんが、そのまま入力して Enter を押してください）
+- この処理により、**「外部から勝手に別のアカウントを作られるのを禁止する」「外部への不要な通信を止める」** という強固なセキュリティロックがかかります。
+
+---
+
+### ステップ 8：`6` を押して専用接続URLを発行する
+- 半角で `6` と入力して `Enter` を押します。
+- Tailscale Serve の安全な通信トンネルが開通します。
+- 画面に、手元の端末からアクセスするための **専用URL** が表示されます！
+  ```text
+  利用URL: https://<あなたのMacの名前>.<ランダム文字列>.ts.net:9443
+  ```
+- このURLをメモ・コピーしてください。
+
+---
+
+### ステップ 9：`7` を押して最終チェック（完成！）
+- 半角で `7` と入力して `Enter` を押します。
+- すべての設定が正常に完了しているかを自動診断（doctor）します。問題なければセットアップ完了です！
+- `q` を入力してメニューを終了できます。
+
+---
+
+## 1.4 手元のMacBookやiPhoneから接続する方法
+
+セットアップが完了したら、Mac mini の前を離れて、普段使っている端末からAIチャットを楽しみましょう。
+
+1. **手元の端末（MacBookやiPhone）で Tailscale アプリを起動し、接続（ON）にします。**  
+   （※Mac mini と同じTailscaleアカウントでログインしている必要があります）
+2. ブラウザ（SafariやChromeなど）を開き、先ほどメモした **専用URL（https://...:9443）** にアクセスします。
+3. ログイン画面が出るので、ステップ6で登録した管理者のメールアドレスとパスワードでログインします。
+4. これで、Mac mini の高性能なローカルAIチャットがどこからでも利用できます！
+
+---
+
+## 1.5 やさしい用語解説（これだけ知っていれば安心）
+
+技術的な専門用語を、身近な言葉で解説します。
+
+| 用語 | 読み方 | やさしい解説 |
+|---|---|---|
+| **Ollama** | オラマ | パソコンの中でAIの「思考・頭脳」を担当するエンジンです。賢いAIモデルをMac mini上で動かしてくれます。 |
+| **Open WebUI** | オープン・ウェブユーアイ | ChatGPTそっくりの「見た目・操作画面」を提供するアプリです。文字入力やファイル添付、過去ログの保存ができます。 |
+| **Tailscale** | テイルスケール | あなたの持っているMac、iPhone、iPadだけが通れる「秘密の専用トンネル」を作るアプリです。世界中の他人は絶対に入れません。 |
+| **127.0.0.1 (localhost)** | ループバック | 「このパソコン自身」を指す特殊な住所です。外からは一切アクセスできず、Mac mini本体の中だけで通信するときに使います。 |
+| **ポート番号 (3000, 9443など)** | ポート | パソコンの中の「部屋番号（内線番号）」です。例えば3000番の部屋でWebUIが動き、9443番の部屋でTailscaleが待ち受けています。 |
+| **Serve（サーブ）** | サーブ | Tailscaleの機能の一つで、「秘密トンネルを通ってきた自分にだけ、特定の部屋（WebUI）を見せる」安全な受付口のことです。 |
+| **RAG（ラグ）** | ラグ / 文書検索 | アップロードしたテキストやPDFの内容をAIが読み込んで、その文書に基づいた正確な回答をしてくれる便利機能です。 |
+
+---
+
+## 1.6 よくあるトラブル・つまずき解消Q&A（非エンジニア向け）
+
+### Q1. `setup.command` をダブルクリックしても開かない・警告が出る
+- **解決策**: ファイルを右クリック（二本指タップ）し、メニューから「開く」を選択してください。確認ダイアログで「開く」を押すと起動します。
+
+### Q2. 「11434番ポートが使用中」と表示された
+- **解決策**: すでにMac mini上で Ollama が起動している状態です。問題ありません。本パッケージは既存のOllamaをそのまま安全に連携して利用します。
+
+### Q3. 「9443番ポートが使用中」と表示された
+- **解決策**: 他のアプリが9443番を使っています。既存のアプリを無理に止める必要はありません。`10443` など別の番号を指定して導入できます（パート2のStep 0を参照）。
+
+### Q4. 手元のMacBookやiPhoneからURLを開いても繋がらない
+以下を上から順にご確認ください：
+1. **Mac miniの電源**: Mac miniがスリープしていませんか？ 画面をタップするか電源設定を見直してください。
+2. **Tailscaleの状態**: 手元の端末とMac miniの**両方**で、Tailscaleアプリが「Connected（緑色）」になっていますか？
+3. **アカウントの一致**: 同じTailscaleアカウントでログインしていますか？
+4. **URLの確認**: `http://` ではなく `https://` で始まっており、末尾に `:9443` が付いていますか？
+
+### Q5. パスワードを忘れてしまった
+- **解決策**: データの安全を守るため、外部からパスワードを強制リセットするバックドアは用意していません。どうしてもログインできない場合は、`backup` でバックアップを確保した上で再セットアップを行うか、パート2の運用ガイドを参照してください。
+
+---
+
+# 【パート2】🛠️ 詳細技術仕様・コマンド操作マニュアル（エンジニア向け）
+
+ここからは、ターミナル操作に慣れたエンジニア・システム管理者向けの厳密な仕様とCLIリファレンスです。
+
+---
+
+## 2.1 アーキテクチャとセキュリティ原則
 
 ```text
 MacBook / Pixel / iPad
         │
-        │ HTTPS / Tailscale
+        │ HTTPS / Tailscale（専用経路）
         ▼
 https://<mac-host>.<tailnet>.ts.net:<HTTPS_PORT>
         │
         ▼
 Tailscale Serve
-        │
         │ proxy
         ▼
 Open WebUI
 127.0.0.1:<WEBUI_PORT>
         │
-        │ Ollama API
+        │ Ollama API（内部ループバックのみ）
         ▼
 Ollama
 127.0.0.1:11434
         │
-        ├─ Chat model
-        └─ Embedding model
+        ├─ Chat model (例: qwen3:4b)
+        └─ Embedding model (例: bge-m3:latest)
 ```
 
-### 2.1 原則
-
-- Ollama は `127.0.0.1:11434` のみで待ち受ける
-- Open WebUI も `127.0.0.1:<WEBUI_PORT>` のみで待ち受ける
-- 外部端末からの入口は Tailscale Serve のHTTPSだけにする
-- Tailscale Funnelは使わない
-- macOSのポートフォワーディングやルーターのポート開放は使わない
-- 既存のServe設定を `reset` しない
-
-Tailscale ServeはTailnet内のローカルサービスを共有する機能で、Funnelはインターネット全体へ公開する機能です。本構成ではServeのみを使います。
-
----
-
-## 3. 対応範囲と非対応範囲
-
-### 対応
-
-- macOS
-- Apple Silicon
-- Ollama.app または Ollama CLI
-- Open WebUI のPython版
-- Tailscale Serve
-- 個人利用または少人数での検証
-- ローカルチャット
-- ローカル埋め込み
-- TXT / Markdown / テキストPDFなどの文書利用
-- 会話履歴のローカル保存
-- 起動・停止・診断・バックアップ
-
-### 非対応 / 未検証
-
-- Windows / Linux の自動構築
-- Docker版Open WebUI
-- Kubernetes
-- インターネットへの公開
-- Tailscale Funnel
-- 複数組織向けの認証設計
-- SSO
-- 大規模マルチユーザー運用
-- SLAを伴う業務システム
-- 医療・金融など規制対象データへの適合性保証
-- Open WebUI / Ollama の脆弱性監査そのもの
+### 厳格なセキュリティ原則
+- **Loopbackバインドの徹底**: Ollama は `127.0.0.1:11434`、Open WebUI は `127.0.0.1:<WEBUI_PORT>` のみで待ち受ける（`0.0.0.0` バインドは禁止）。
+- **Tailscale Serve のみ利用**: インターネット全体に公開する `Tailscale Funnel` は使用しない。ポートフォワーディングやルーターの穴あけも行わない。
+- **既存設定の非破壊**: `tailscale serve reset` を絶対に実行せず、既存の他サービス（ポート443や他ポート）と安全に共存する。
+- **管理者作成後の安全ロック**:
+  - 新規アカウント自己登録の禁止 (`ENABLE_SIGNUP=false`)
+  - 外部OpenAI互換エンドポイントの無効化
+  - Web検索・コード実行・サードパーティプラグイン・拡張機能の無効化
+  - Cookie属性の `Secure` / `SameSite=Lax` 化および CORS制限
 
 ---
 
-## 4. 参考検証環境
+## 2.2 対応範囲と検証済み環境
 
-本プロジェクトは、少なくとも以下の1環境で導入フローを確認しています。
+### 対応環境
+- OS: macOS（Apple Silicon M1/M2/M3/M4シリーズ推奨）
+- ランチャー実行要件: Python 3.9以上, `uv`
+- Open WebUI: 専用 Python 3.11 環境上に展開（0.11.3 固定検証候補）
+- Ollama: macOSネイティブアプリ版または公式CLI
 
+### 参考検証実績
 ```text
-macOS: 27.0
-Architecture: arm64
-Chip: Apple M4 Pro
-Memory: 64 GB
-Python: 3.11.15
+macOS: Darwin 27.x (arm64)
+Chip: Apple Silicon
+Python: 3.11.15 (uvにより隔離管理)
 Open WebUI: 0.11.3
-Ollama: macOSアプリ版
-Tailscale: macOS上で稼働
+Tailscale: macOS Native Client
 ```
 
-Open WebUI導入時には、専用Python 3.11.15環境に263パッケージが入り、依存関係チェックが完了しています。
-
-この環境は**推奨最低要件ではありません**。使用するモデルサイズ、コンテキスト長、同時実行数によって必要メモリは大きく変わります。
-
 ---
 
-## 5. 必要ソフトウェア
+## 2.3 CLIコマンドリファレンス
 
-### 必須
-
-- macOS
-- Ollama
-- Tailscale
-- `uv`
-- Python 3.9以上（ランチャー用）
-  - Open WebUI本体用にはプロジェクトがPython 3.11環境を別途用意します
-
-### 推奨
-
-- Apple Silicon
-- 16 GB以上のユニファイドメモリ
-- 十分な空きストレージ
-- FileVault
-
-Open WebUI公式はPython 3.11 / 3.12をサポートし、特にPython 3.11を重点的にテストしています。
-
----
-
-## 6. GitHubからの導入
-
-リポジトリ名を仮に `local-llm-web-mvp` とします。
+本パッケージは `llmweb`（または `python3 llmweb.py`）によりコマンドラインから全工程を制御可能です。
 
 ```bash
-git clone https://github.com/<OWNER>/local-llm-web-mvp.git
-cd local-llm-web-mvp
+# 基本構文
+bash ./llmweb <コマンド> [オプション]
 ```
 
-実行権限が失われている場合のみ:
+### コマンド一覧
 
-```bash
-chmod +x llmweb setup.command
-```
-
-`sudo`は使いません。
+| コマンド | 引数例 | 内容 |
+|---|---|---|
+| `preflight` | `--https-port 9443` | 読み取り専用で環境・ポート・Tailscale状況を検査 |
+| `install` | `--web-port 3000 --https-port 9443 --ollama-mode existing` | 専用Python 3.11仮想環境とOpen WebUIを構築 |
+| `start` | `[ollama\|webui\|all]` | LaunchAgentまたはバックグラウンドジョブとして起動 |
+| `stop` | `[ollama\|webui\|all]` | 対象プロセスを安全に停止 |
+| `pull-models` | - | 指定モデル（Chat/Embed）をOllamaから取得 |
+| `smoke` | - | Ollama直接APIの応答と埋め込みベクトルの疎通試験 |
+| `secure` | - | 管理者認証を通し、Open WebUIの設定を固定・セキュア化 |
+| `publish` | - | Tailscale Serveに専用HTTPSポート経路を追加 |
+| `unpublish` | - | 本パッケージが追加したServe経路のみを安全に削除 |
+| `doctor` | - | プロセス待受、認証、疎通、HTTPSエンドポイントの総合診断 |
+| `backup` | - | 停止状態のDATA_DIRおよび設定スナップショットを生成 |
+| `restore-test` | `<バックアップパス>` | 本番を汚染しない隔離ディレクトリで復元可能性を検証 |
 
 ---
 
-# 7. 導入手順
+## 2.4 CLIによる詳細導入ステップ（Step 0 〜 Step 11）
 
-## Step 0. 既存環境を確認する
-
-最初に必ずpreflightを実行します。
-
+### Step 0. 既存環境の事前検査（Preflight）
 ```bash
 bash ./llmweb preflight --https-port 9443
 ```
-
-例:
-
+出力例（JSON）:
 ```json
 {
   "platform": "Darwin",
@@ -184,915 +331,121 @@ bash ./llmweb preflight --https-port 9443
   "serve_9443_in_use": false
 }
 ```
-
-### 合格条件
-
-- WebUI用ポートが空いている
-- HTTPS公開用ポートがTailscale Serveで未使用
-- Ollama再利用時は `127.0.0.1:11434` のみ
-- Tailscaleが `Running`
-
-`9443`が使用中なら、既存サービスを止めず、別のHTTPSポートを選びます。
-
-例:
-
-```bash
-bash ./llmweb preflight --https-port 10443
-```
+合格条件:
+- WebUIポート（既定: 3000）が未使用
+- HTTPSポート（既定: 9443）がTailscale Serveで未使用
+- Ollamaが動いている場合は `127.0.0.1:11434` のみでリッスンしていること
 
 ---
 
-## Step 1. Ollamaの待受を確認する
-
+### Step 1. Ollamaの待受インターフェース確認
 ```bash
 lsof -nP -iTCP:11434 -sTCP:LISTEN
 ```
-
-安全な例:
-
-```text
-ollama ... TCP 127.0.0.1:11434 (LISTEN)
-```
-
-避ける例:
-
-```text
-ollama ... TCP *:11434 (LISTEN)
-ollama ... TCP 0.0.0.0:11434 (LISTEN)
-```
-
-### Ollama.app利用時
-
-Ollamaの設定で **Expose Ollama to the network** をOFFにします。
-
-環境変数も確認します。
-
-```bash
-launchctl getenv OLLAMA_HOST
-```
-
-何も表示されない状態が基本です。
-
-macOSアプリ版Ollamaで環境変数を使う場合は `launchctl setenv` が公式手順ですが、本構成ではOllamaを外部へ公開しないため、`OLLAMA_HOST=0.0.0.0:11434` のような設定は使いません。
+`127.0.0.1:11434 (LISTEN)` であることを確認します。`*:11434` や `0.0.0.0:11434` の場合は外部公開リスクがあるため、Ollamaの設定で「Expose to network」をOFFにしてください。
 
 ---
 
-## Step 2. Open WebUI専用環境を作る
-
-既にOllama.appが動いている場合:
-
+### Step 2. 専用環境の構築（Install）
 ```bash
-bash ./llmweb install \
-  --https-port 9443 \
-  --ollama-mode existing
+bash ./llmweb install --https-port 9443 --ollama-mode existing
 ```
-
-Ollamaもこのプロジェクト側で起動管理する構成では `managed` モードを使えますが、既にOllama.appを普段使いしているMacでは `existing` を推奨します。
-
-### `existing` の意味
-
-- 既存Ollamaを停止しない
-- 既存Ollamaを再起動しない
-- 既存OllamaのLaunchAgentを変更しない
-- `127.0.0.1:11434`で応答することだけ確認する
-
-### installが行うこと
-
-概ね以下を実行します。
-
-1. 専用データディレクトリ作成
-2. 専用Python 3.11環境作成
-3. Open WebUIの固定版をインストール
-4. 依存関係をロック
-5. ハッシュ付きrequirementsを保存
-6. Open WebUI設定ファイルを生成
-7. LaunchAgent用ファイルを生成
-8. 実際に導入されたバージョンを記録
-
-保存先:
-
-```text
-~/Library/Application Support/local-llm-web/
-```
-
-代表的な構造:
-
-```text
-local-llm-web/
-├── venv/
-├── data/
-├── config/
-│   ├── state.json
-│   ├── webui.env
-│   ├── requirements.in
-│   └── requirements.lock
-├── scripts/
-├── logs/
-├── records/
-└── backups/
-```
+- `uv` を使用して隔離された `.venv`（Python 3.11）を作成します。
+- `open-webui==0.11.3` を依存関係ハッシュとともに固定インストールします。
+- 専用データ保存先 `data/` を作成し、他プロセスと競合しない設計にします。
 
 ---
 
-## Step 3. モデルを取得する
-
-初期設定の例:
-
-```text
-Chat model: qwen3:4b
-Embedding model: bge-m3:latest
-```
-
-取得:
-
+### Step 3. モデルの取得（Pull Models）
 ```bash
 bash ./llmweb pull-models
 ```
-
-モデルは利用者のOllama環境へ保存されます。
-
-GitHubリポジトリにはモデル重みを含めないでください。
+既定ではチャット用 `qwen3:4b` と、文書埋め込み（RAG）用 `bge-m3:latest` を取得します。
 
 ---
 
-## Step 4. Ollama APIをスモークテストする
-
+### Step 4. Ollama疎通テスト（Smoke Test）
 ```bash
 bash ./llmweb smoke
 ```
-
-確認内容:
-
-- `/api/chat` が応答する
-- `/api/embed` が応答する
-- 埋め込みベクトルが返る
-
-例:
-
-```json
-{
-  "chat_seconds": 2.65,
-  "embedding_dimensions": 1024
-}
-```
-
-ここではOpen WebUIのUI・ストリーミング・文書検索までは検証しません。
+OllamaのローカルAPIにダミープロンプトとテキストを投げ、推論およびベクトル埋め込みが正常に返るか確認します。
 
 ---
 
-## Step 5. Open WebUIをローカル起動する
-
+### Step 5. Open WebUIの初期起動（Start WebUI）
 ```bash
 bash ./llmweb start webui
 ```
-
-Mac mini自身のブラウザから開きます。
-
-```text
-http://127.0.0.1:3000
-```
-
-この時点ではTailscaleへ公開しません。
+Mac mini 内のループバック（`http://127.0.0.1:3000`）限定でWebUIが起動します。
 
 ---
 
-## Step 6. 管理者アカウントを作る
-
-初回画面から自分用の管理者アカウントを1つ作成します。
-
-重要:
-
-- 初期アカウント作成はMac miniのloopbackから行う
-- 管理者作成前に遠隔公開しない
-- GitHubのREADME、Issue、ログへメールアドレスやパスワードを書かない
+### Step 6. 管理者アカウントの作成
+Mac mini 本体のブラウザで `http://127.0.0.1:3000` を開き、初期管理者のメールアドレスとパスワードを登録します。
 
 ---
 
-## Step 7. チャットをローカル確認する
-
-モデルとして `qwen3:4b` などを選び、短いメッセージを送ります。
-
-日本語をデフォルトにしたい場合はOpen WebUIのSystem Promptへ、例えば次を設定します。
-
-```text
-原則として日本語で回答してください。
-ユーザーが明示的に他の言語を指定した場合のみ、その言語で回答してください。
-```
-
-言語設定はネットワーク接続の成否とは別です。
-
----
-
-## Step 8. 公開前の安全設定を確定する
-
-管理者作成後に実行します。
-
+### Step 7. 安全設定の固定（Secure）
 ```bash
 bash ./llmweb secure
 ```
-
-管理者メールとパスワードをターミナルで入力します。
-
-### secureで行う主な処理
-
-- 管理者認証を確認
-- 新規ユーザー登録を停止
-- ローカルOllama接続を固定
-- 外部OpenAI互換APIを無効化
-- Web検索を無効化
-- コード実行を無効化
-- Functions / Plugins / runtime pip install系を無効化
-- RAG埋め込み先をOllamaへ設定
-- `WEBUI_URL`を最終HTTPS URLへ設定
-- HTTPS用Cookieへ切り替え
-- CORSを最終HTTPS URLへ制限
-- 保存後に設定を読み戻して確認
-
-### 重要な挙動
-
-`secure` 実行後は、CookieがHTTPS前提になるため、
-
-```text
-http://127.0.0.1:3000
-```
-
-でのチャットが一時的に正常動作しなくなる場合があります。
-
-これは想定動作です。
-
-次の `publish` でHTTPS入口を有効化し、その後はHTTPS URLから利用します。
+対話プロンプトで管理者のメール・パスワードを入力します（メモリ内でのみ使用され、保存されません）。
+Open WebUIの内部管理API経由で、新規登録無効化・HTTPS Cookie有効化・外部API切断を適用し、安全な状態に再起動します。
 
 ---
 
-## Step 9. Tailscale ServeでHTTPS公開する
-
+### Step 8. Tailscale Serveの公開（Publish）
 ```bash
 bash ./llmweb publish
 ```
-
-構成例:
-
-```text
-https://<mac-host>.<tailnet>.ts.net:9443
-        ↓
-http://127.0.0.1:3000
-```
-
-このプロジェクトは、既存Serve設定を確認した上で新しいHTTPSポートだけを追加します。
-
-### やってはいけないこと
-
-```bash
-tailscale serve reset
-```
-
-既存のOpenClaw、監視サービス、開発サーバーなど別用途のServe設定まで消える可能性があります。
-
-手動で確認する場合:
-
-```bash
-tailscale serve status --json
-```
-
-Tailscale ServeはTailnet内だけに公開されます。インターネット全体へ公開するFunnelとは別機能です。
+Tailscale Serveのルーティングテーブルに、専用ポート（例: 9443）から内部 `127.0.0.1:3000` へのプロキシ設定を追加します。他のポート設定には一切干渉しません。
 
 ---
 
-## Step 10. 診断する
-
+### Step 9. 総合診断（Doctor）
 ```bash
 bash ./llmweb doctor
 ```
-
-主に以下を確認します。
-
-- Open WebUIプロセス
-- loopback待受
-- Ollama到達性
-- Open WebUI認証
-- 未認証APIの拒否
-- Tailscale Serve経路
-- 期待するHTTPS URL
+全レイヤーの疎通、ループバックバインド、Tailscale FQDN、HTTPS応答を検証します。
 
 ---
 
-## Step 11. 別端末からアクセスする
-
-MacBook / Pixel / iPadなど、同じTailnetに接続した端末から:
-
+### Step 10. クライアント端末からの接続
+手元の端末のブラウザで、発行された専用URLを開きます：
 ```text
 https://<mac-host>.<tailnet>.ts.net:9443
 ```
 
-を開きます。
-
-確認項目:
-
-- ログインできる
-- モデル一覧が表示される
-- チャットできる
-- ストリーミング表示される
-- 履歴が保持される
-- Tailscaleを切るとアクセスできなくなる
-
 ---
 
-# 8. 日常利用
+## 2.5 バックアップと復元試験
 
-日常的には次の4つが動いていれば利用できます。
-
-1. Mac mini
-2. Ollama
-3. Open WebUI
-4. Tailscale
-
-ブラウザでは常にHTTPS URLを使います。
-
-```text
-https://<mac-host>.<tailnet>.ts.net:<HTTPS_PORT>
-```
-
-## 自動起動
-
-Open WebUIはmacOSのLaunchAgentで起動する構成です。
-
-LaunchAgentはmacOSのユーザーログインセッションで動きます。
-
-そのため:
-
-- Mac mini電源ONだけでは十分でない場合がある
-- FileVault解除が必要
-- macOSユーザーへのログインが必要
-- スリープ中は利用できない場合がある
-
-GitHub上で「再起動後も必ず無人で使える」と断定しないでください。
-
----
-
-# 9. 起動・停止
-
-Open WebUI:
-
-```bash
-bash ./llmweb start webui
-bash ./llmweb stop webui
-```
-
-全サービス管理モードの場合:
-
-```bash
-bash ./llmweb start all
-bash ./llmweb stop all
-```
-
-`--ollama-mode existing`の場合、既存Ollamaは本プロジェクトの所有物ではないため、このCLIで停止しません。
-
----
-
-# 10. Tailscale公開を解除する
-
-```bash
-bash ./llmweb unpublish
-```
-
-本プロジェクトが作成したと確認できる専用経路だけを削除します。
-
-既存Serve設定をまとめて消さない設計が重要です。
-
----
-
-# 11. バックアップ
-
+### バックアップの取得
 ```bash
 bash ./llmweb backup
 ```
+Open WebUIを一時停止し、`data/`（SQLite DB、暗号化キー、アップロードファイル）の一貫したスナップショットを `backups/YYYYMMDD-HHMMSS/` に作成します。
 
-バックアップ対象の例:
-
-- Open WebUI SQLite DB
-- 会話履歴
-- 添付ファイル
-- Chromaベクトルデータ
-- 設定
-- プロジェクト側の記録
-
-バックアップには秘密情報を含む可能性があります。
-
-GitHubへコミットしないでください。
-
----
-
-# 12. 復元試験
-
-本番を直接上書きせず、隔離コピーで確認します。
-
+### 復元可能性の検証
 ```bash
-bash ./llmweb restore-test \
-  "$HOME/Library/Application Support/local-llm-web/backups/<BACKUP_NAME>"
+bash ./llmweb restore-test backups/<作成されたフォルダ名>
 ```
-
-復元試験用ポートは本番とは分けます。
-
-確認項目:
-
-- SQLite整合性
-- 会話履歴
-- 添付文書
-- 設定
-- 文書検索
+本番環境を上書きすることなく、隔離されたテンポラリ空間でDBの整合性チェックとファイル整合性を自動検証します。
 
 ---
 
-# 13. Open WebUIの保存設計
-
-Open WebUIは`DATA_DIR`を明示して利用します。
-
-この設定を省略すると、実行方式によってはデータ保存先が分かりにくくなります。
-
-本プロジェクトでは:
-
-```text
-~/Library/Application Support/local-llm-web/data
-```
-
-を固定保存先にします。
-
-Open WebUI公式もPython/uv利用時には`DATA_DIR`を明示するよう案内しています。
-
----
-
-# 14. RAG / 文書検索
-
-初期構成では埋め込みもローカルへ寄せます。
-
-```text
-RAG_EMBEDDING_ENGINE=ollama
-RAG_EMBEDDING_MODEL=<embedding-model>
-```
-
-例:
-
-```text
-bge-m3
-nomic-embed-text
-```
-
-Open WebUI自身のSentenceTransformersを使わず、Ollamaへ埋め込みを任せることで、構成と処理先を分かりやすくします。
-
-個人利用の初期構成では、SQLite + ローカルChromaの単一ワーカー運用を前提にします。
-
----
-
-# 15. 主なセキュリティ設定
-
-以下は考え方を示したものであり、最終的な正確な設定一覧はソースコードを正としてください。
-
-| 項目 | 方針 |
-|---|---|
-| Ollama | `127.0.0.1:11434`限定 |
-| Open WebUI | `127.0.0.1`限定 |
-| 遠隔入口 | Tailscale Serve |
-| HTTPS | Tailscale証明書 |
-| Funnel | 使用しない |
-| Sign up | 管理者作成後OFF |
-| CORS | 利用するHTTPS URLへ限定 |
-| Secure Cookie | HTTPS移行後ON |
-| Web検索 | 初期構成ではOFF |
-| コード実行 | OFF |
-| Runtime pip install | OFF |
-| 外部API | 初期構成ではOFF |
-| RAG embeddings | Ollama |
-| Workers | 1 |
-
-Open WebUI公式も、本番運用ではCORS制限、HTTPS用Secure Cookie、runtime pip installの停止などを推奨しています。
-
----
-
-# 16. 依存関係の再現性
-
-Open WebUI本体は固定バージョンを指定します。
-
-例:
-
-```text
-open-webui==0.11.3
-```
-
-`uv pip compile`で依存関係を解決し、ハッシュ付きロックを作成します。
-
-概念例:
-
-```bash
-uv pip compile \
-  requirements.in \
-  --generate-hashes \
-  --output-file requirements.lock
-```
-
-インストールはロックファイルへ同期します。
-
-```bash
-uv pip sync requirements.lock
-```
-
-GitHub配布時には、macOS/arm64で生成したロックを他OSへ無条件に適用できるとは限らない点を明記してください。
-
----
-
-# 17. LaunchAgentによる自動起動
-
-Open WebUIの自動起動は `~/Library/LaunchAgents/` を利用します。
-
-概念例:
-
-```xml
-<dict>
-  <key>Label</key>
-  <string>local.llmweb.webui</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>/absolute/path/start-webui.sh</string>
-  </array>
-
-  <key>RunAtLoad</key>
-  <true/>
-
-  <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
-</dict>
-```
-
-ポイント:
-
-- `ProgramArguments`は絶対パス
-- root権限を使わない
-- 本プロジェクト所有のLabelだけを操作する
-- 既存LaunchAgentを名前だけで停止しない
-
----
-
-# 18. トラブルシューティング
-
-## 18.1 `11434` が使用中
-
-```bash
-lsof -nP -iTCP:11434 -sTCP:LISTEN
-```
-
-Ollamaなら、`existing`モードで再利用できます。
-
-不明なプロセスの場合は停止せず、先に所有者を調査してください。
-
----
-
-## 18.2 Ollamaが `*:11434` になっている
-
-Ollama.appの **Expose Ollama to the network** をOFFにし、再起動します。
-
-```bash
-launchctl getenv OLLAMA_HOST
-```
-
-も確認します。
-
----
-
-## 18.3 HTTPSポートが使用中
-
-```bash
-tailscale serve status --json
-```
-
-既存ポートを削除せず、新規側を変更します。
-
-```bash
-bash ./llmweb preflight --https-port 10443
-bash ./llmweb install --https-port 10443 --ollama-mode existing
-```
-
----
-
-## 18.4 `secure`後にlocalhostでチャットできない
-
-想定される挙動です。
-
-`secure`後はHTTPS用CookieとCORSに切り替わっています。
-
-```bash
-bash ./llmweb publish
-bash ./llmweb doctor
-```
-
-を完了し、HTTPS URLを利用します。
-
----
-
-## 18.5 MacBookからアクセスできない
-
-確認順:
-
-1. Mac miniが起動中か
-2. Mac miniがログイン済みか
-3. Mac miniのTailscaleがConnectedか
-4. MacBookのTailscaleがConnectedか
-5. Open WebUIが起動中か
-6. `tailscale serve status --json`
-7. Tailnet ACL / Grants
-8. `bash ./llmweb doctor`
-
----
-
-## 18.6 UIは出るがモデルが出ない
-
-```bash
-ollama list
-curl http://127.0.0.1:11434/api/tags
-```
-
-Open WebUIからOllamaへの接続設定も確認します。
-
----
-
-# 19. GitHub配布用の推奨リポジトリ構成
-
-```text
-local-llm-web-mvp/
-├── README.md
-├── LICENSE
-├── NOTICE.md
-├── CHANGELOG.md
-├── SECURITY.md
-├── .gitignore
-├── llmweb
-├── llmweb.py
-├── core.py
-├── setup.command
-├── docs/
-│   ├── BUILD_GUIDE.md
-│   ├── OPERATIONS.md
-│   ├── ACCEPTANCE.md
-│   ├── IMPLEMENTATION_STATUS.md
-│   └── SOURCES.md
-├── specs/
-│   ├── 01_requirements.md
-│   ├── 02_technology-stack.md
-│   └── 03_architecture.md
-├── samples/
-│   ├── sample.md
-│   └── expected-answers.json
-└── tests/
-    └── ...
-```
-
-トップのREADMEは短くし、詳細は本書へリンクする形を推奨します。
-
----
-
-# 20. GitHubへ絶対に入れないもの
-
-`.gitignore`で最低限、次を除外します。
-
-```gitignore
-__pycache__/
-*.pyc
-.DS_Store
-
-.env
-*.env
-state.json
-
-venv/
-.venv/
-
-data/
-logs/
-records/
-backups/
-restore-tests/
-
-*.db
-*.db-wal
-*.db-shm
-```
-
-加えて、以下を手動確認します。
-
-- メールアドレス
-- Tailscale FQDN
-- Tailnet名
-- IPアドレス
-- APIキー
-- `WEBUI_SECRET_KEY`
-- Cookie / JWT
-- バックアップ
-- 実会話
-- 実ファイル
-- 患者・顧客情報
-
-公開前には以下を推奨します。
-
-```bash
-git grep -n -E 'gmail|ts\.net|API_KEY|SECRET|PASSWORD|TOKEN'
-```
-
-検出結果は人間が確認してください。
-
----
-
-# 21. ライセンスとOpen WebUIの扱い
-
-本リポジトリ自身のコードには、作者が配布方針に合ったLICENSEを明示してください。
-
-一方、Open WebUIは第三者ソフトウェアです。
-
-本プロジェクトでは次の方針を推奨します。
-
-- Open WebUI本体をリポジトリへコピーしない
-- `pip` / `uv` で公式配布物を取得する
-- Open WebUIのロゴ・名称を勝手に消さない
-- 自分のプロジェクトを「Open WebUI公式」と誤認させない
-- `NOTICE.md` で利用している第三者ソフトウェアを明記する
-- Open WebUIの現行ライセンスをRelease前に再確認する
-
-Open WebUIの現行ライセンスにはブランド表示に関する条件があります。再配布・商用利用・リブランドを行う場合は、必ず公式LICENSEの最新版を確認してください。
-
-これは法的助言ではありません。
-
----
-
-# 22. READMEに載せる最短導入例
-
-GitHubトップページには、詳細な説明を全部置かず、次程度に絞ると使いやすくなります。
-
-```bash
-# 1. clone
-git clone https://github.com/<OWNER>/local-llm-web-mvp.git
-cd local-llm-web-mvp
-
-# 2. check
-bash ./llmweb preflight --https-port 9443
-
-# 3. install
-bash ./llmweb install --https-port 9443 --ollama-mode existing
-
-# 4. models
-bash ./llmweb pull-models
-bash ./llmweb smoke
-
-# 5. local WebUI
-bash ./llmweb start webui
-# Open: http://127.0.0.1:3000
-
-# 6. create admin in browser, then harden
-bash ./llmweb secure
-
-# 7. Tailscale HTTPS
-bash ./llmweb publish
-bash ./llmweb doctor
-```
-
-詳細は `docs/BUILD_GUIDE.md` へ誘導します。
-
----
-
-# 23. リリース前チェックリスト
-
-GitHub Releaseを作る前に以下をすべて確認します。
-
-- [ ] `preflight` が既存環境を変更しない
-- [ ] 既存Ollamaを `existing` モードで停止しない
-- [ ] Ollamaのwildcard待受を拒否する
-- [ ] 使用中HTTPSポートを上書きしない
-- [ ] 既存Tailscale Serve経路を保持する
-- [ ] `tailscale serve reset` を使わない
-- [ ] 管理者作成前に遠隔公開しない
-- [ ] `secure`で新規登録が停止する
-- [ ] `publish`前後のServe設定を比較する
-- [ ] `doctor`が成功する
-- [ ] Tailscale OFFの端末から到達できない
-- [ ] Open WebUIが再起動後も復帰する
-- [ ] Ollamaが再起動後もloopback限定
-- [ ] バックアップを作成できる
-- [ ] 隔離復元試験が成功する
-- [ ] `.gitignore`に秘密データが含まれる
-- [ ] Git履歴に秘密情報が残っていない
-- [ ] サンプルデータが架空情報のみ
-- [ ] LICENSE / NOTICE / SECURITY.mdを確認
-- [ ] Open WebUIの現行LICENSEを確認
-- [ ] CHANGELOGを更新
-- [ ] タグとコード内バージョンが一致
-
----
-
-# 24. 推奨受け入れ試験
-
-最低限、次を手動で確認します。
-
-### ローカル
-
-- [ ] Ollama Chat API
-- [ ] Ollama Embed API
-- [ ] Open WebUI表示
-- [ ] 日本語チャット
-- [ ] ストリーミング
-- [ ] 会話履歴
-- [ ] モデル切替
-- [ ] TXT添付
-- [ ] Markdown添付
-- [ ] テキストPDF添付
-
-### 遠隔
-
-- [ ] 別Wi-FiのMacBookから利用
-- [ ] スマホから利用
-- [ ] Tailscale OFFで利用不可
-- [ ] HTTPS証明書エラーなし
-- [ ] CORSエラーなし
-
-### 復帰
-
-- [ ] Mac mini再起動
-- [ ] macOSログイン後にOpen WebUI復帰
-- [ ] Ollama復帰
-- [ ] Tailscale復帰
-- [ ] URLが同じ
-- [ ] 履歴が残る
-
-### バックアップ
-
-- [ ] バックアップ作成
-- [ ] SQLite整合性
-- [ ] 隔離復元
-- [ ] 過去会話表示
-- [ ] 添付文書表示
-
----
-
-# 25. 今後拡張する場合
-
-初期版ではYAGNIを優先し、次は必要になるまで追加しません。
-
-候補:
-
-- 複数モデルのプリセット
-- モデル別System Prompt
-- ローカル音声認識
-- Knowledge Base
-- OCR
-- 外部ストレージ
-- チーム利用
-- Redis / PostgreSQL / PGVector
-- 独自UI
-- MCP / Tools
-- ローカルエージェント
-
-ユーザーが実際に困った箇所から追加するのが推奨です。
-
----
-
-# 26. 公式リファレンス
-
-- Open WebUI Python environments  
-  https://docs.openwebui.com/getting-started/quick-start/install-methods/python-environments/
-
-- Open WebUI Environment Variables  
-  https://docs.openwebui.com/reference/env-configuration/
-
-- Open WebUI Hardening  
-  https://docs.openwebui.com/getting-started/advanced-topics/hardening/
-
-- Open WebUI Connection Errors / Reverse Proxy  
-  https://docs.openwebui.com/troubleshooting/connection-error/
-
-- Open WebUI License  
-  https://github.com/open-webui/open-webui/blob/main/LICENSE
-
-- Ollama FAQ  
-  https://docs.ollama.com/faq
-
-- Tailscale Serve  
-  https://tailscale.com/docs/features/tailscale-serve
-
-- Tailscale Serve CLI  
-  https://tailscale.com/docs/reference/tailscale-cli/serve
-
-- uv Locking environments  
-  https://docs.astral.sh/uv/pip/compile/
-
-- Apple Launch Agents  
-  https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html
+## 2.6 トラブルシューティング（詳細技術編）
+
+| 障害事象 | 根本原因 | 推奨対処手順 |
+|---|---|---|
+| **`11434` が使用中** | 別途Ollamaまたは別プロセスが稼働中 | `lsof -nP -iTCP:11434` でPIDを確認。Ollamaであれば `--ollama-mode existing` でそのまま再利用可能。 |
+| **`secure` 後に localhost でチャットできない** | CookieがHTTPS専用（Secure属性）に切り替わったため | 仕様通りの動作です。`publish` を実行し、Tailscale の `https://...` 経由でアクセスしてください。 |
+| **MacBookからアクセスできない** | Tailnet ACL、未ログイン、Serve経路の不整合 | 1. `tailscale status` で双方の接続確認<br>2. `tailscale serve status --json` で9443番の存在確認<br>3. `bash ./llmweb doctor` の診断出力を確認。 |
+| **WebUIは開くがモデル一覧が空** | Ollamaへの内部接続エラー | `curl http://127.0.0.1:11434/api/tags` でOllamaがモデルを返しているか確認し、WebUI設定の接続先URL（`http://127.0.0.1:11434`）を照合。 |
 
 ---
 
 ## 最後に
 
-このプロジェクトの一番重要な設計方針は、**「既存環境を壊してまで自動化しない」**ことです。
-
-ポートが使われていれば止まり、Ollamaが外部公開されていれば止まり、Tailscaleに既存経路があればそれを保持する。
-
-GitHubで配布する場合も、「ワンコマンドで全部やる」ことより、利用者の既存Mac環境を守ることを優先してください。
+このシステムは「自分のデータは自分の手元に置く」というプライバシー保護の理念に基づいて設計されています。  
+実機環境での動作検証を丁寧に行い、快適で安全なプライベートAI環境をご活用ください。

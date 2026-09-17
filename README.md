@@ -1,12 +1,20 @@
 # 個人用ローカルLLM Web環境 — 導入・運用パッケージ
 
-**バージョン 0.1.0 / 2026-09-16 / Mac mini向けの初期実装**
+**バージョン 0.1.0 / 2026-09-17 / Mac mini向けの安全なローカルAI運用環境**
 
-OllamaとOpen WebUIをmacOSで直接動かし、既存Tailscale経由で使うためのソース一式です。新しいチャットUIは作らず、Open WebUIの標準画面を利用します。元のOpenClaw・443番経路・Docker Sandboxは変更対象にしません。
+> 💡 **初めて導入する方・非エンジニアの方へ**  
+> 難しいコマンドは不要です！まずは **[はじめにお読みください（START_HERE.md）](START_HERE.md)** をご覧ください。  
+> フォルダ内の `setup.command` をダブルクリックして番号を選ぶだけで、誰でも安全にセットアップできます。  
+> 詳しい図解ガイドは **[構築・運用完全ガイド（docs/local-llm-web-mvp_BUILD_GUIDE.md）](docs/local-llm-web-mvp_BUILD_GUIDE.md)** を参照してください。
 
-**このZIPを作成した時点ではMac miniへ導入していません。** 設定・安全チェック・運用処理は実装済みですが、ここで実行したのはLinux上の自動テストです。Open WebUI本体、Ollama本体、モデル、Python依存物はZIPに含めず、利用者がMac miniで導入コマンドを実行した際に取得します。実機試験が済むまでは初期実装として扱ってください。
+---
+
+OllamaとOpen WebUIをmacOSで直接動かし、既存Tailscale経由で安全に使うためのパッケージ一式です。新しいチャットUIを車輪の再発明せず、評価の高いOpen WebUIの標準画面を利用します。元のOpenClaw・443番経路・Docker Sandboxなど既存のサービスは変更しません。
+
+**この配布フォルダを作成した時点ではMac miniへ導入していません。** 設定・安全チェック・運用処理は実装済みですが、Open WebUI本体、Ollama本体、モデル、Python依存物は配布サイズ削減と最新安全性の観点から同梱せず、Mac miniで導入コマンド（またはメニュー）を実行した際に公式から取得します。
 
 ## 構成
+
 
 ```text
 MacBook / Pixel / iPad のブラウザ
