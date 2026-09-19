@@ -23,8 +23,8 @@ while true; do
   esac
   if /bin/bash "$HERE/llmweb" "${args[@]}"; then
     if [ "$choice" = 4 ]; then
-      printf '初回はMac miniのブラウザで http://127.0.0.1:3000 を開き、管理者を作成してください。\n'
-      printf 'ポートを変更している場合は変更先を使います。HTTPS設定済みなら正規HTTPS URLを使います。\n'
+      printf '初回はMac miniのブラウザで http://127.0.0.1:3001 を開き、管理者を作成してください。\n'
+      printf '3001番が使用中なら自動割当された番号（導入時の表示）を使います。HTTPS設定済みなら正規HTTPS URLを使います。\n'
     fi
   else
     printf '\nこの工程は完了していません。エラーを解消するまで次の番号へ進まないでください。\n'

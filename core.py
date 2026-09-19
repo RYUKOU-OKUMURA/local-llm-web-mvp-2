@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 PROJECT = 'local-llm-web'
-PACKAGE_VERSION = '0.1.1'
+PACKAGE_VERSION = '0.1.2'
 OPENWEBUI_VERSION = '0.11.3'  # PyPI listing checked 2026-09-16; not Mac-certified.
 ROOT = Path.home() / 'Library' / 'Application Support' / PROJECT
 OLLAMA_URL = 'http://127.0.0.1:11434'

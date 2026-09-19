@@ -41,7 +41,7 @@ Mac mini（既存ホスト）
 │                       ※ここは変更しない               │
 │                                                       │
 │  HTTPS 9443 ─────────→ Open WebUI                     │
-│                       127.0.0.1:3000                  │
+│                       127.0.0.1:3001                  │
 │                       専用Python 3.11 venv            │
 │                       単一worker / 標準アカウント      │
 │                             │                         │
@@ -60,7 +60,7 @@ Mac mini（既存ホスト）
 └───────────────────────────────────────────────────────┘
 ```
 
-Mac mini自身のブラウザも、通常利用では同じ正規HTTPS URLを使う。初期設定とローカル診断だけ`127.0.0.1:3000`を使う。MacBookに「同じアプリ一式」を導入して同期する構成ではない。
+Mac mini自身のブラウザも、通常利用では同じ正規HTTPS URLを使う。初期設定とローカル診断だけ`127.0.0.1:3001`を使う。MacBookに「同じアプリ一式」を導入して同期する構成ではない。
 
 Tailscale ServeはローカルサービスをTailnet内へ共有する機能であり、HTTPSポートを指定できる。既存経路を維持しながら別の入口を追加する設計に用いる。[TS-01][TS-02]
 
@@ -87,7 +87,7 @@ Open WebUIはネイティブのOllama接続を利用する。クライアント�
 1. 利用端末が既存Tailnetへ接続する。
 2. ブラウザが`https://<MAC_MINI_FQDN>:9443`を開く。
 3. Tailscaleのアクセス制御を通ったリクエストをServeが受ける。
-4. Serveが`http://127.0.0.1:3000`のOpen WebUIへ転送する。
+4. Serveが`http://127.0.0.1:3001`のOpen WebUIへ転送する。
 5. Open WebUIの標準ログインを行う。
 6. 認証済みユーザーとして会話一覧とモデル一覧を取得する。
 
@@ -212,7 +212,7 @@ DATA_DIRは固定する。Open WebUIのPython/uv導入でデータ保存先を�
 
 ### 6.1 ネットワーク境界
 
-外部端末に許す入口はServeの9443番だけとする。Open WebUIの3000番とOllamaの11434番は`127.0.0.1`のみ。`0.0.0.0`、`::`、LAN IP、Tailscale IPで直接待ち受けさせない。
+外部端末に許す入口はServeの9443番だけとする。Open WebUIの3001番とOllamaの11434番は`127.0.0.1`のみ。`0.0.0.0`、`::`、LAN IP、Tailscale IPで直接待ち受けさせない。
 
 同じTailnetに所属しているだけで本人限定になるわけではない。既存のアクセスルールを確認し、新規ポートを誰が使えるかを記録する。ルール変更が必要でも、既存のOpenClawの権限を消したり広げたりせず、新規用途に限った最小差分にする。[TS-02]
 
@@ -257,7 +257,7 @@ df -h "$HOME"
 command -v ollama
 command -v uv
 lsof -nP -iTCP:11434 -sTCP:LISTEN
-lsof -nP -iTCP:3000 -sTCP:LISTEN
+lsof -nP -iTCP:3001 -sTCP:LISTEN
 lsof -nP -iTCP:9443 -sTCP:LISTEN
 lsof -nP -iTCP:18789 -sTCP:LISTEN
 tailscale status
@@ -283,7 +283,7 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 
 ### 段階2：WebUIをMac mini内部だけで初期化
 
-専用venv、固定DATA_DIR、ローカル生成したWEBUI_SECRET_KEYを用意する。初期URLとOriginはMac mini自身のローカル確認用とし、WebUIを`127.0.0.1:3000`で起動する。
+専用venv、固定DATA_DIR、ローカル生成したWEBUI_SECRET_KEYを用意する。初期URLとOriginはMac mini自身のローカル確認用とし、WebUIを`127.0.0.1:3001`で起動する。
 
 この間だけ管理者作成用の新規登録を許可し、通常運用のHTTPS用Secure Cookie設定とは分ける。本人がMac miniのブラウザで管理者アカウントを作成する。パスワードをチャット・コマンド引数・ログに書かない。
 
@@ -302,7 +302,7 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 そのうえで、9443番が既存用途に使われていないことを再確認して追加する。
 
 ```bash
-tailscale serve --bg --https=9443 http://127.0.0.1:3000
+tailscale serve --bg --https=9443 http://127.0.0.1:3001
 tailscale serve status
 ```
 

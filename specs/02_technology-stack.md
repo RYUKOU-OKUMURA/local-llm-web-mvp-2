@@ -98,7 +98,7 @@ DATA_DIRをOpenClawのworkspace、クラウド同期フォルダ、仮想環境�
 | 用途 | 待受・経路 | 変更方針 |
 |---|---|---|
 | Ollama | `127.0.0.1:11434` | LAN・Tailnetへ直接公開しない |
-| Open WebUI | `127.0.0.1:3000` | Python版の既定値ではなく明示指定 |
+| Open WebUI | `127.0.0.1:3001` | Python版の既定値ではなく明示指定 |
 | WebUI入口 | `https://<MAC_MINI_FQDN>:9443` | Serveへ新規追加。空き確認必須 |
 | 既存OpenClaw | `127.0.0.1:18789` | 変更しない |
 | 既存OpenClaw入口 | 既存HTTPS 443番 | 変更しない |
@@ -110,7 +110,7 @@ Open WebUI CLIの参照実装では、既定hostは`0.0.0.0`、portは8080であ
 | ラベル | 実行対象 |
 |---|---|
 | `local.llmweb.ollama` | 確認済みOllamaバイナリの`serve` |
-| `local.llmweb.webui` | 専用venv内の`open-webui serve --host 127.0.0.1 --port 3000` |
+| `local.llmweb.webui` | 専用venv内の`open-webui serve --host 127.0.0.1 --port 3001` |
 
 Ollamaは公式macOS配布物から利用可能なバイナリを導入し、通常運用のサーバー起動は専用LaunchAgentに一本化する。Ollama.appのログイン起動と重ねない。既にOllamaが別用途で使われている場合は、その利用を確認するまで起動元を変更しない。
 
@@ -301,7 +301,7 @@ Open WebUIはOllamaを埋め込みエンジンとして選択でき、Ollamaに�
 ブラウザ
   → https://<MAC_MINI_FQDN>:9443
   → 既存Tailscale Serve
-  → http://127.0.0.1:3000
+  → http://127.0.0.1:3001
   → http://127.0.0.1:11434
 ```
 
@@ -315,7 +315,7 @@ tailscale serve status
 tailscale serve status --json
 
 # WebUI起動・管理者作成・登録停止・9443未使用確認後の追加例。
-tailscale serve --bg --https=9443 http://127.0.0.1:3000
+tailscale serve --bg --https=9443 http://127.0.0.1:3001
 
 # 追加後に既存443番が変わっていないことを確認。
 tailscale serve status

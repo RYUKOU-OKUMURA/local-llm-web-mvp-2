@@ -101,6 +101,26 @@ def port_free(port: int) -> None:
         raise SafetyError(f'{port}番は既に使用中です。既存プロセスを自動停止しません。')
 
 
+# Ollama・OpenClawなど既存用途の番号は自動割当の候補から外す。
+RESERVED_PORTS = frozenset({11434, 18789})
+
+
+def pick_port(requested: int, *, avoid: set[int] = frozenset(), span: int = 100) -> int:
+    """Return the requested port if free, else the nearest higher free port.
+
+    Occupancy follows port_free (any-interface listener counts as busy).
+    `avoid` holds not-yet-bound ports that must stay reserved for this run
+    (e.g. the other new port's requested value)."""
+    if not 1024 <= requested <= 65535:
+        raise SafetyError('自動割当の起点は1024〜65535で指定してください。')
+    blocked = set(avoid) | RESERVED_PORTS
+    limit = min(requested + span, 65535)
+    for candidate in range(requested, limit + 1):
+        if candidate not in blocked and not listeners(candidate):
+            return candidate
+    raise SafetyError(f'{requested}〜{limit}番に空きポートがありません。別の番号を指定してください。')
+
+
 def validate_existing_ollama() -> None:
     """Validate an Ollama server owned outside this package without mutating it."""
     assert_loopback_listener(listeners(11434), 11434)
@@ -153,10 +173,16 @@ def preflight(args=None) -> dict:
         r = command(args, check=False)
         report[key] = r.stdout.strip() if r.returncode == 0 else '未確認'
     report['free_disk_gib'] = round(shutil.disk_usage(Path.home()).free / (1024 ** 3), 1)
-    web_port = getattr(args, 'web_port', 3000) if args else 3000
+    web_port = getattr(args, 'web_port', 3001) if args else 3001
     https_port = getattr(args, 'https_port', 9443) if args else 9443
     for port in (web_port, https_port, 11434, 18789):
         report[f'port_{port}'] = '使用中' if listeners(port) else '待受なし'
+    for label, requested, avoid in (('web', web_port, {https_port}), ('https', https_port, {web_port})):
+        if listeners(requested):
+            try:
+                report[f'{label}_port_auto_assign'] = pick_port(requested, avoid=avoid)
+            except SafetyError:
+                report[f'{label}_port_auto_assign'] = '空きなし'
     ollama_listeners = listeners(11434)
     report['ollama_listener_endpoints'] = sorted({name for values in ollama_listeners.values() for name in values})
     try:
@@ -206,23 +232,30 @@ def install(args) -> None:
     fqdn = fqdn_from_status(ts_json(bins, 'status'))
     validate_ports(args.web_port, args.https_port)
     version(args.webui_version); model_tag(args.chat_model); model_tag(args.embed_model)
+    state = None
     if ROOT.exists():
         state = load_state(installed=False)
         if state['installed']:
             print('導入済みです。上書き更新しません。doctorで状態を確認してください。')
             return
+    # 指定ポートが他ツールに使われていれば、近い空き番号へ一時割当する（既存側は変更しない）。
+    web_port = pick_port(args.web_port, avoid={args.https_port})
+    https_port = pick_port(args.https_port, avoid={web_port})
+    if web_port != args.web_port or https_port != args.https_port:
+        print(f'指定ポートは使用中です。今回の導入は WebUI={web_port}番 / HTTPS={https_port}番 を使います。')
+    selected = {'web_port': web_port, 'https_port': https_port, 'webui_version': args.webui_version,
+                'chat_model': args.chat_model, 'embed_model': args.embed_model, 'ollama_mode': args.ollama_mode}
+    if state is not None:
         if (ROOT / 'data/webui.db').exists():
             raise SafetyError('未完了の導入に既存DBがあります。上書きせず調査してください。')
-        for key in ('web_port', 'https_port', 'webui_version', 'chat_model', 'embed_model', 'ollama_mode'):
-            if state[key] != getattr(args, key):
+        for key, val in selected.items():
+            if state[key] != val:
                 raise SafetyError('途中導入の値と指定が違います。同じ指定で再試行してください。')
         if state['fqdn'] != fqdn:
             raise SafetyError('Tailscaleホスト名が変わっています。導入を再開しません。')
     else:
         state = dict(bins, project=PROJECT, package_version=PACKAGE_VERSION,
-                     fqdn=fqdn, web_port=args.web_port, https_port=args.https_port,
-                     webui_version=args.webui_version, chat_model=args.chat_model,
-                     embed_model=args.embed_model, ollama_mode=args.ollama_mode, phase='local', installed=False,
+                     fqdn=fqdn, **selected, phase='local', installed=False,
                      published=False, created_at=now())
     if state['ollama_mode'] == 'managed':
         port_free(11434)
@@ -628,6 +661,9 @@ def restore_test(args) -> None:
     validate_ports(port, state['https_port'])
     if port == state['web_port']:
         raise SafetyError('本番WebUIのポートを復元試験に使いません。')
+    port = pick_port(port, avoid={state['web_port'], state['https_port']})
+    if port != args.port:
+        print(f'{args.port}番は使用中です。復元試験は一時的に{port}番を使います。')
     with lock(ROOT / 'records/operation.lock'):
         port_free(port); ensure_running(state, 'ollama')
         confirm('停止・復元の影響を分けるため、本番WebUIを停止し、隔離コピーをHTTPで開きます。Ctrl+Cで試験を終了します。', yes=args.yes)
@@ -658,11 +694,11 @@ def build_parser():
     parser.add_argument('--version', action='version', version=PACKAGE_VERSION)
     sub = parser.add_subparsers(dest='action', required=True)
     p = sub.add_parser('preflight', help='読み取り専用で実機の前提を確認')
-    p.add_argument('--web-port', type=int, default=3000)
+    p.add_argument('--web-port', type=int, default=3001)
     p.add_argument('--https-port', type=int, default=9443)
     p = sub.add_parser('install', help='専用venv・設定・起動スクリプトを配置。サービスは未起動')
     p.add_argument('--webui-version', default=OPENWEBUI_VERSION)
-    p.add_argument('--web-port', type=int, default=3000)
+    p.add_argument('--web-port', type=int, default=3001)
     p.add_argument('--https-port', type=int, default=9443)
     p.add_argument('--chat-model', default='qwen3:4b')
     p.add_argument('--embed-model', default='bge-m3:latest')
@@ -679,7 +715,7 @@ def build_parser():
     sub.add_parser('doctor', help='起動・待受・公開の部分診断')
     sub.add_parser('backup', help='WebUI停止中に全DATA_DIRと設定を保存')
     p = sub.add_parser('restore-test', help='本番を上書きしない隔離コピーの復元試験')
-    p.add_argument('snapshot'); p.add_argument('--port', type=int, default=3001); p.add_argument('--yes', action='store_true')
+    p.add_argument('snapshot'); p.add_argument('--port', type=int, default=3010); p.add_argument('--yes', action='store_true')
     p = sub.add_parser('_run', help='内部用：LaunchAgentの実行先。手動実行しない'); p.add_argument('service', choices=tuple(LABELS))
     return parser
 

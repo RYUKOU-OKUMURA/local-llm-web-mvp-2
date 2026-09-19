@@ -157,4 +157,28 @@ class Flows(unittest.TestCase):
         self.assertFalse(result['mac_ready']); self.command.assert_not_called()
 
 
+class PortFallback(unittest.TestCase):
+    def occupied(self, ports):
+        return lambda p: {1: [f'127.0.0.1:{p}']} if p in ports else {}
+    def test_requested_port_kept_when_free(self):
+        with patch.object(app, 'listeners', return_value={}):
+            self.assertEqual(app.pick_port(3001), 3001)
+    def test_occupied_falls_to_next_free(self):
+        with patch.object(app, 'listeners', side_effect=self.occupied({3001, 3002})):
+            self.assertEqual(app.pick_port(3001), 3003)
+    def test_avoid_skipped_even_when_free(self):
+        with patch.object(app, 'listeners', return_value={}):
+            self.assertEqual(app.pick_port(3001, avoid={3001, 3002}), 3003)
+    def test_reserved_port_never_assigned(self):
+        # 11434 is free here but must be skipped anyway (Ollama's port).
+        with patch.object(app, 'listeners', side_effect=self.occupied({11432, 11433, 11435})):
+            self.assertEqual(app.pick_port(11432), 11436)
+    def test_no_free_port_rejected(self):
+        with patch.object(app, 'listeners', return_value={1: ['127.0.0.1:x']}):
+            with self.assertRaises(c.SafetyError): app.pick_port(3001)
+    def test_out_of_range_rejected(self):
+        for bad in (0, 80, 65536):
+            with self.subTest(bad=bad), self.assertRaises(c.SafetyError): app.pick_port(bad)
+
+
 if __name__ == '__main__': unittest.main()
