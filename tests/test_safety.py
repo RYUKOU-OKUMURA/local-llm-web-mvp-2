@@ -316,9 +316,12 @@ class DatabaseStartupGuard(unittest.TestCase):
     def test_no_admin_rejected(self):
         self.make(['pending'])
         with self.assertRaises(c.SafetyError): c.assert_admin_database(self.path)
-    def test_multiple_users_rejected(self):
-        self.make(['admin', 'user'])
-        with self.assertRaises(c.SafetyError): c.assert_admin_database(self.path)
+    def test_invited_users_allowed(self):
+        self.make(['admin', 'user', 'user']); before = c.file_hash(self.path)
+        c.assert_admin_database(self.path); self.assertEqual(before, c.file_hash(self.path))
+    def test_multiple_admins_allowed(self):
+        self.make(['admin', 'admin', 'user'])
+        c.assert_admin_database(self.path)
     def test_unknown_schema_rejected(self):
         connection = sqlite3.connect(self.path); connection.execute('CREATE TABLE other (x INTEGER)'); connection.close(); self.path.chmod(0o600)
         with self.assertRaises(c.SafetyError): c.assert_admin_database(self.path)

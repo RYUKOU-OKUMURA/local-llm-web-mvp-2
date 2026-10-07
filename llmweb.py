@@ -603,6 +603,64 @@ def unpublish(_args=None) -> None:
     print('WebUI専用のHTTPS経路だけを削除しました。443番・OpenClaw・会話データは残しています。')
 
 
+def user_admin_gate(state: dict) -> str:
+    """Shared gate for account ops: https phase, running WebUI, invite-only config, admin token."""
+    if state['phase'] != 'https':
+        raise SafetyError('登録制の確定後（secure完了・https運用）に実行してください。')
+    ensure_running(state, 'webui')
+    base = f'http://127.0.0.1:{state["web_port"]}'
+    public_auth_guard(require_api(base, '/api/config'))
+    return base
+
+
+def add_user(args) -> None:
+    """Invite a normal user (role=user) through the admin API. Public signup stays closed."""
+    mac_only(); state = load_state()
+    if state['phase'] != 'https':
+        raise SafetyError('登録制の確定後（secure完了・https運用）に実行してください。')
+    name = (args.name or input('追加する利用者の表示名: ')).strip()
+    email = (args.email or input('追加する利用者のメールアドレス: ')).strip().lower()
+    if not 0 < len(name) <= 100 or any(x in name for x in '\r\n') or not re.fullmatch(r'[^@\s]+@[^@\s]+', email):
+        raise SafetyError('利用者名とメールアドレスを確認してください。')
+    password = getpass.getpass('利用者の初期パスワード（非表示・保存しません）: ')
+    if not password or len(password.encode('utf-8')) > 72:
+        raise SafetyError('初期パスワードを1〜72バイトで指定してください。')
+    with lock(ROOT / 'records/operation.lock'):
+        base = user_admin_gate(state)
+        token = admin_token(base)
+        # Upstream endpoint (open_webui 0.11.3 routers/auths.py): POST /api/v1/auths/add,
+        # admin bearer, body {name,email,password,role}. Response may carry a session token: never print it.
+        code, result, _ = api(base, '/api/v1/auths/add',
+                              {'name': name, 'email': email, 'password': password, 'role': 'user'}, token=token)
+        del token, password
+    if code != 200 or not isinstance(result, dict) or result.get('role') != 'user':
+        raise SafetyError(f'利用者の作成に失敗しました（HTTP {code}）。メール重複や権限を確認してください。')
+    print(f'利用者を追加しました: {result.get("name")} <{result.get("email")}> role=user')
+    print('初期パスワードと正規URLは安全な経路で本人へ伝え、初回ログイン後の変更を促してください。')
+
+
+def list_users(_args=None) -> None:
+    """Read-only list of registered accounts (role shown; no secrets involved)."""
+    mac_only(); state = load_state()
+    if state['phase'] != 'https':
+        raise SafetyError('登録制の確定後（secure完了・https運用）に実行してください。')
+    with lock(ROOT / 'records/operation.lock'):
+        base = user_admin_gate(state)
+        token = admin_token(base)
+        # Upstream endpoint (open_webui 0.11.3 routers/users.py): GET /api/v1/users/?page=N, admin bearer.
+        users, page, total = [], 1, None
+        while total is None or len(users) < total:
+            result = require_api(base, f'/api/v1/users/?page={page}', token=token)
+            if not isinstance(result, dict) or not isinstance(result.get('users'), list):
+                raise SafetyError('利用者一覧の応答形式が不明です。')
+            users.extend(result['users']); total = result.get('total', len(users)); page += 1
+        del token
+    for u in users:
+        if isinstance(u, dict):
+            print(f"- {u.get('name')} <{u.get('email')}> role={u.get('role')}")
+    print(f'登録済み {total} アカウント（role=adminが管理者）')
+
+
 def doctor(_args=None) -> None:
     mac_only(); state = load_state()
     errors = []
@@ -710,6 +768,9 @@ def build_parser():
     p = sub.add_parser('pull-models', help='設定したモデルを明示的に取得'); p.add_argument('--yes', action='store_true')
     sub.add_parser('smoke', help='Ollamaへの直接APIテスト。WebUIのE2Eではない')
     sub.add_parser('secure', help='管理者認証・保存設定の制限・HTTPSモードへ変更')
+    p = sub.add_parser('add-user', help='一般利用者を管理者権限で招待。公開登録は開きません')
+    p.add_argument('--name'); p.add_argument('--email')
+    sub.add_parser('list-users', help='登録済みアカウントの一覧を表示')
     p = sub.add_parser('publish', help='安全設定を照合して専用Serve経路を追加'); p.add_argument('--yes', action='store_true')
     sub.add_parser('unpublish', help='記録と完全一致する専用Serve経路だけを削除')
     sub.add_parser('doctor', help='起動・待受・公開の部分診断')
@@ -728,6 +789,7 @@ def main() -> int:
         elif args.action == '_run': mac_only(); run_service(ROOT, args.service)
         else:
             functions = {'install': install, 'start': start, 'stop': stop, 'pull-models': pull_models,
+                         'add-user': add_user, 'list-users': list_users,
                          'smoke': smoke, 'secure': secure, 'publish': publish, 'unpublish': unpublish,
                          'doctor': doctor, 'backup': backup, 'restore-test': restore_test}
             functions[args.action](args)
