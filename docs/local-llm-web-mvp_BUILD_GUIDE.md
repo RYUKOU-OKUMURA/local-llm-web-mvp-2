@@ -297,11 +297,14 @@ bash ./llmweb <コマンド> [オプション]
 |---|---|---|
 | `preflight` | `--https-port 9443` | 読み取り専用で環境・ポート・Tailscale状況を検査 |
 | `install` | `--web-port 3001 --https-port 9443 --ollama-mode existing` | 専用Python 3.11仮想環境とOpen WebUIを構築 |
+|  | `--ollama-parallel 4 --ollama-max-models 2 --ollama-context-length 8192` | 同時生成数・同時ロード数・文脈長（既定1/1/4096。managedモードのみ有効） |
 | `start` | `[ollama\|webui\|all]` | LaunchAgentまたはバックグラウンドジョブとして起動 |
 | `stop` | `[ollama\|webui\|all]` | 対象プロセスを安全に停止 |
 | `pull-models` | - | 指定モデル（Chat/Embed）をOllamaから取得 |
 | `smoke` | - | Ollama直接APIの応答と埋め込みベクトルの疎通試験 |
 | `secure` | - | 管理者認証を通し、Open WebUIの設定を固定・セキュア化 |
+| `add-user` | `--name 表示名 --email user@example.com` | 一般利用者（role=user）を管理者権限で招待作成。初期パスワードは非表示入力 |
+| `list-users` | - | 登録済みアカウントとroleの一覧表示 |
 | `publish` | - | Tailscale Serveに専用HTTPSポート経路を追加 |
 | `unpublish` | - | 本パッケージが追加したServe経路のみを安全に削除 |
 | `doctor` | - | プロセス待受、認証、疎通、HTTPSエンドポイントの総合診断 |
