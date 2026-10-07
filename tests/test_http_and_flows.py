@@ -26,6 +26,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/api/v1/configs/export':
             if self.headers.get('Authorization') == 'Bearer fixture-token': self.send_json(200, {'ui.enable_signup': False})
             else: self.send_json(401, {'error': 'private fixture error'})
+        elif self.path.startswith('/api/v1/users/'):
+            if self.headers.get('Authorization') == 'Bearer fixture-token':
+                self.send_json(200, {'users': [{'id': 'a1', 'name': 'Admin', 'email': 'admin@x.test', 'role': 'admin'},
+                                            {'id': 'u2', 'name': 'Taro', 'email': 'taro@x.test', 'role': 'user'}],
+                                     'total': 2})
+            else: self.send_json(401, {'error': 'private fixture error'})
         elif self.path == '/redirect':
             self.send_response(302); self.send_header('Location', '/must-not-follow'); self.end_headers()
         else: self.send_json(404, {'error': 'missing'})
@@ -35,6 +41,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {'token': 'fixture-token', 'role': 'admin'})
         elif self.path == '/api/v1/configs/import' and self.headers.get('Authorization') == 'Bearer fixture-token':
             self.send_json(200, data['config'])
+        elif self.path == '/api/v1/auths/add' and self.headers.get('Authorization') == 'Bearer fixture-token':
+            self.send_json(200, {'id': 'u2', 'token': 'new-user-session-token', 'token_type': 'Bearer',
+                                 'name': data['name'], 'email': data['email'], 'role': data['role'],
+                                 'profile_image_url': '/user.png'})
         else: self.send_json(403, {'error': 'private fixture error'})
 
 
@@ -57,6 +67,18 @@ class HTTP(unittest.TestCase):
     def test_export_import_shape(self):
         exported = c.require_api(self.base, '/api/v1/configs/export', token='fixture-token')
         self.assertEqual(c.require_api(self.base, '/api/v1/configs/import', {'config': exported}, token='fixture-token'), exported)
+    def test_admin_users_endpoints_fixture(self):
+        listed = c.require_api(self.base, '/api/v1/users/?page=1', token='fixture-token')
+        self.assertEqual(listed['total'], 2); self.assertEqual(listed['users'][1]['role'], 'user')
+        code, body, _ = c.api(self.base, '/api/v1/auths/add',
+                              {'name': 'N', 'email': 'n@x.test', 'password': 'secret-1', 'role': 'user'},
+                              token='fixture-token')
+        self.assertEqual(code, 200); self.assertEqual(body['role'], 'user')
+    def test_admin_endpoints_reject_without_token(self):
+        code, _, _ = c.api(self.base, '/api/v1/users/?page=1')
+        self.assertEqual(code, 401)
+        code, _, _ = c.api(self.base, '/api/v1/auths/add', {'name': 'x', 'email': 'x@y.test', 'password': 'z', 'role': 'user'})
+        self.assertEqual(code, 403)
     def test_redirect_blocked(self):
         with self.assertRaises(c.SafetyError): c.api(self.base, '/redirect', token='fixture-token')
     def test_external_http_rejected(self):
@@ -155,6 +177,71 @@ class Flows(unittest.TestCase):
         with patch.object(app.sys, 'platform', 'linux'):
             result = app.preflight()
         self.assertFalse(result['mac_ready']); self.command.assert_not_called()
+    def test_add_user_creates_role_user_and_hides_secrets(self):
+        created = {}
+        def fake_api(base, path, body=None, token=None, **kw):
+            if path == '/api/v1/auths/add':
+                created.update(body)
+                return 200, {'id': 'u2', 'token': 'new-user-session-token', 'name': body['name'],
+                             'email': body['email'], 'role': body['role']}, None
+            raise AssertionError(path)
+        stream = io.StringIO()
+        with patch.object(app, 'require_api', return_value=GOOD_AUTH), patch.object(app, 'api', side_effect=fake_api), \
+             patch('getpass.getpass', return_value='invite-secret-1'), contextlib.redirect_stdout(stream):
+            app.add_user(argparse.Namespace(name='Taro', email='Taro@X.Test'))
+        self.assertEqual(created, {'name': 'Taro', 'email': 'taro@x.test', 'password': 'invite-secret-1', 'role': 'user'})
+        out = stream.getvalue()
+        self.assertIn('taro@x.test', out)
+        self.assertNotIn('invite-secret-1', out); self.assertNotIn('new-user-session-token', out)
+    def test_add_user_rejects_before_https(self):
+        self.state['phase'] = 'local'; c.write_json(self.root / 'config/state.json', self.state)
+        with self.assertRaises(c.SafetyError):
+            app.add_user(argparse.Namespace(name='x', email='x@y.test'))
+    def test_add_user_rejects_bad_fields(self):
+        for bad in ({'name': '', 'email': 'x@y.test'}, {'name': 'x', 'email': 'not-an-email'},
+                    {'name': 'a\nb', 'email': 'x@y.test'}):
+            with self.subTest(bad=bad), patch('builtins.input', return_value=''), self.assertRaises(c.SafetyError):
+                app.add_user(argparse.Namespace(**bad))
+    def test_add_user_failed_request_rejected(self):
+        with patch.object(app, 'require_api', return_value=GOOD_AUTH), \
+             patch.object(app, 'api', return_value=(400, {'detail': 'EMAIL_TAKEN'}, None)), \
+             patch('getpass.getpass', return_value='invite-secret-1'):
+            with self.assertRaises(c.SafetyError):
+                app.add_user(argparse.Namespace(name='Taro', email='taro@x.test'))
+    def test_list_users_prints_accounts(self):
+        stream = io.StringIO()
+        with patch.object(app, 'require_api', side_effect=lambda base, path, **kw: (
+                GOOD_AUTH if path == '/api/config' else
+                {'users': [{'name': 'Admin', 'email': 'a@x.test', 'role': 'admin'},
+                           {'name': 'Taro', 'email': 't@x.test', 'role': 'user'}], 'total': 2})), \
+             contextlib.redirect_stdout(stream):
+            app.list_users()
+        out = stream.getvalue()
+        self.assertIn('t@x.test', out); self.assertIn('admin', out); self.assertIn('2', out)
+    def test_list_users_paginates(self):
+        pages = {
+            '/api/v1/users/?page=1': {'users': [{'name': 'A', 'email': 'a@x.test', 'role': 'admin'}], 'total': 2},
+            '/api/v1/users/?page=2': {'users': [{'name': 'B', 'email': 'b@x.test', 'role': 'user'}], 'total': 2}}
+        def fake(base, path, **kw):
+            if path == '/api/config': return GOOD_AUTH
+            if path in pages: return pages[path]
+            raise AssertionError(path)
+        stream = io.StringIO()
+        with patch.object(app, 'require_api', side_effect=fake), contextlib.redirect_stdout(stream):
+            app.list_users()
+        self.assertIn('b@x.test', stream.getvalue())
+    def test_list_users_rejects_bad_responses(self):
+        for bad in ({'users': 'notalist', 'total': 1}, {'users': [], 'total': 2},
+                    {'users': [{'name': 'A'}], 'total': 'x'}, {'users': [{'name': 'A'}], 'total': None}):
+            with self.subTest(bad=bad), patch.object(app, 'require_api',
+                    side_effect=lambda base, path, _bad=bad, **kw: GOOD_AUTH if path == '/api/config' else _bad), \
+                 self.assertRaises(c.SafetyError):
+                app.list_users()
+    def test_list_users_rejects_non_dict_entry(self):
+        with patch.object(app, 'require_api', side_effect=lambda base, path, **kw: (
+                GOOD_AUTH if path == '/api/config' else {'users': [{'name': 'A'}, 'oops'], 'total': 2})), \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(c.SafetyError):
+            app.list_users()
 
 
 class PortFallback(unittest.TestCase):

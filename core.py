@@ -603,7 +603,9 @@ def assert_backend_not_shared(config, port: int) -> None:
 def assert_admin_database(path: Path) -> None:
     """Read-only startup guard: a lost/empty DB must not reopen first-admin setup.
 
-    The upstream `user.role` schema is explicitly checked; unknown schemas stop.
+    At least one `role='admin'` row must exist; invited non-admin users may
+    coexist (added via `llmweb add-user`). The upstream `user.role` schema is
+    explicitly checked; unknown schemas stop.
     No user identities, hashes or chat content are selected or returned.
     """
     if not path.is_file():
@@ -612,9 +614,10 @@ def assert_admin_database(path: Path) -> None:
     connection = None
     try:
         connection = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
-        rows = connection.execute('SELECT COUNT(*), COALESCE(SUM(role = ?), 0) FROM "user"', ('admin',)).fetchone()
-        if rows != (1, 1):
-            raise SafetyError('本人用管理者1名のDBを確認できません。HTTPS運用を開始しません。')
+        count, admins = connection.execute(
+            'SELECT COUNT(*), COALESCE(SUM(role = ?), 0) FROM "user"', ('admin',)).fetchone()
+        if count < 1 or admins < 1:
+            raise SafetyError('管理者を含むユーザーDBを確認できません。HTTPS運用を開始しません。')
     except sqlite3.Error as exc:
         raise SafetyError('DBの管理者構造を確認できません。DBを書き換えず調査してください。') from exc
     finally:
