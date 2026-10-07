@@ -1,11 +1,11 @@
 ---
 title: "個人用ローカルLLM Web環境 — 技術スタック"
 project_id: "local-llm-web"
-version: "1.0"
+version: "1.1"
 created: "2026-09-16"
-as_of: "2026-09-16"
+as_of: "2026-10-07"
 owner: "BOSS"
-status: "採用構成の仕様化／実機導入・受け入れ試験は未実施"
+status: "採用構成の仕様化／実機導入・受け入れ試験は未実施。v1.1で管理者招待制の複数人利用を追加"
 ---
 
 # 個人用ローカルLLM Web環境 — 技術スタック
@@ -34,7 +34,8 @@ status: "採用構成の仕様化／実機導入・受け入れ試験は未実�
 | ファイル保存 | Mac miniのローカルファイルシステム | 添付文書・アプリデータ | DATA_DIRを絶対パスで固定 |
 | ネットワーク | 既存Tailscale | 端末とMac mini間の到達経路 | 既存Tailnetと既存アカウントを流用 |
 | HTTPS入口 | Tailscale Serve | Tailnet内HTTPSとリバースプロキシ | 新規9443番からWebUIへ。443番は維持 |
-| 認証 | Open WebUI標準アカウント | WebUI利用者認証 | 本人用1アカウント。SSOは使わない |
+| 認証 | Open WebUI標準アカウント | WebUI利用者認証 | 管理者＋招待ユーザーの複数アカウント。公開登録は開かずSSOは使わない |
+| 利用者管理 | Open WebUI管理API | 招待ユーザーの作成・一覧 | `llmweb add-user` / `list-users`。role=userのみ |
 | 起動管理 | macOS launchd / LaunchAgent | ログイン後起動・異常終了時の再起動 | 本プロジェクト専用の2ジョブ |
 | ログ・保守 | ローカルログ、構成記録、停止中バックアップ | 切り分けと復元 | 新規監視サーバー・バックアップ製品は導入しない |
 
@@ -65,6 +66,7 @@ Open WebUIのPython環境は公式手段である。初期ベースラインは�
 | Tailscale | 稼働バージョン、Serveの変更前後の状態、正規URL |
 | チャットモデル | 正式タグ、ダイジェスト、量子化、サイズ、採用文脈長 |
 | 埋め込みモデル | 正式タグ、ダイジェスト、ベクトル次元、評価した言語 |
+| Ollama資源値 | 並列数・同時ロード数・文脈長の実値（install指定値） |
 | 保存先 | DATA_DIR、モデル保存先、バックアップ先 |
 | 検証 | 要件定義のAT番号、日時、結果、残余リスク |
 
@@ -164,6 +166,7 @@ uv pip check --python "$APP_ROOT/venv/bin/python"
 | 起動時の秘密情報 | 権限600の`config/webui.env` | `WEBUI_SECRET_KEY`をローカル生成・固定 |
 | Ollama設定 | `config/ollama.env` | 専用プロセスへ渡す。ユーザー全体へ無差別に設定しない |
 | WebUIの永続設定 | WebUI管理画面・アプリDB | 接続先・登録可否等の実際の値を記録・確認 |
+| 利用者アカウント | アプリDB | `add-user`で作成し管理画面で管理。DB直接編集はしない |
 | ユーザーの好み | WebUI標準設定 | 日本語、モデル等。安全設定と混同しない |
 | バージョン・変更履歴 | `config`と`records` | 秘密情報を除いて記録 |
 
@@ -212,6 +215,8 @@ HF_HUB_OFFLINE=1
 
 **初回のみの違い：** ローカルのHTTP画面で管理者を作る間は`ENABLE_SIGNUP=true`、`WEBUI_SESSION_COOKIE_SECURE=false`、URL/Originはローカル確認用にする。管理者作成後に登録を閉じ、通常運用のHTTPS値へ切り替え、再起動とログイン試験を行う。初期管理者未作成の状態で9443番を公開しない。
 
+**複数人利用でも`ENABLE_SIGNUP=false`を維持する。** 追加の利用者は公開登録画面ではなく、管理者が`llmweb add-user`経由で管理APIを呼んで作成する招待制とする。登録状況は`llmweb list-users`で確認する。利用者の停止・削除・パスワード変更はWebUI管理画面の標準機能を使い、本ツールへは追加しない。
+
 OFFLINE_MODEを有効化する前に、ローカルモデルと文書処理に必要な依存物を準備する。クリーン環境にこの例をそのまま投入して起動することを想定しない。
 
 ### 6.3 補足設定と禁止事項
@@ -240,18 +245,20 @@ Open WebUI公式は、不要なコード実行の停止、Functions/Toolsへの�
 # config/ollama.env — 専用LaunchAgentが起動するプロセスへ渡す。
 OLLAMA_HOST='127.0.0.1:11434'
 OLLAMA_NO_CLOUD=1
-OLLAMA_NUM_PARALLEL=1
-OLLAMA_MAX_LOADED_MODELS=1
-OLLAMA_CONTEXT_LENGTH=4096
+OLLAMA_NUM_PARALLEL=<install指定値。既定1>
+OLLAMA_MAX_LOADED_MODELS=<install指定値。既定1>
+OLLAMA_CONTEXT_LENGTH=<install指定値。既定4096>
 ```
 
-loopback待受とクラウド機能停止は必須。並列数1、同時ロード1、文脈長4096は**初期の資源制御用設計値**であり、性能保証や全モデル共通の最適値ではない。モデルの対応範囲と実機測定を踏まえて調整する。[OL-02]
+loopback待受とクラウド機能停止は必須。並列数・同時ロード数・文脈長は`install`の`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`で指定する**資源制御用設計値**であり、既定は従来の単一人向け値。複数人利用では利用者数・メモリ余裕を実機測定してから引き上げる。性能保証や全モデル共通の最適値ではない。[OL-02]
+
+並列数を上げるとモデルあたりの文脈メモリが並列数分だけ増える。`--ollama-max-models 2`にすると埋め込みモデルとチャットモデルの入替待ちが減る一方、常駐メモリが増える。既存OpenClawの動作を損なわない範囲で調整する。
 
 `OLLAMA_NO_CLOUD=1`の反映後は、サーバーログとモデル一覧を確認する。Ollamaにクラウドモデル・Web検索を使わせない。サーバー設定を変えた場合は対象プロセスを再起動する。[OL-02]
 
 ### 7.2 モデル切替と文書検索の負荷
 
-同時ロード数を1にすると、文書検索用の埋め込みモデルとチャットモデルを順番に入れ替える場面がある。その読み込み時間は初期構成で許容する。速くするために同時ロード数を増やすのは、OpenClawへの影響とメモリ余裕を測定してからにする。
+同時ロード数が1の場合、文書検索用の埋め込みモデルとチャットモデルを順番に入れ替える場面がある。その読み込み時間は初期構成で許容する。複数人利用で入替待ちが問題になる場合は`--ollama-max-models`の引き上げを検討するが、OpenClawへの影響とメモリ余裕を測定してからにする。
 
 Open WebUIのモデル別`num_ctx`が指定されていると、Ollamaサーバーの文脈長設定よりリクエスト値が優先される場合がある。両者を照合し、意図せず大きな文脈長を要求しない。[OW-03]
 
@@ -388,9 +395,9 @@ DB移行後にアプリだけをダウングレードしない。Ollama更新も
 | Next.js等の自作UI | Open WebUIで要求を満たす。新規開発をしない |
 | 独自LLM中継API | Open WebUIがOllamaへ直接接続できる |
 | Nginx / Caddy追加 | 既存Tailscale Serveで必要な入口を構成する |
-| Redis / PostgreSQL / 外部ベクトルDB | 1人・1台・1workerでは追加しない |
+| Redis / PostgreSQL / 外部ベクトルDB | 少人数・1台・1workerでは追加しない |
 | クラウドLLM / クラウド埋め込み | 本プロジェクトのローカル処理要件に反する |
-| SSO / Trusted headers | 個人用標準ログインで足りる |
+| SSO / Trusted headers | 標準ログイン＋管理者招待で足りる |
 | モデル自動更新・最新版追従 | 安定性と再現性を優先 |
 | OpenClawとの共通DB・共通workspace | データと障害の影響を切り離す |
 
