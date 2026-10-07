@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3 — 2026-10-07
+
+複数人利用の前提となるOllama資源値の設定化。
+
+- `install`に`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`を追加（既定は従来の単一人値 1 / 1 / 4096）。
+- 値を`config/state.json`へ保存し`config/ollama.env`を生成。起動前の整合確認・`pull-models`・`smoke`も同じ値を使う。
+- `doctor`でmanagedモードの実値を表示。
+- 途中導入の再開時は新キーだけ未記録を許容し、古いキーは従来通り厳格に照合する。
+- 安全テストを追加。合計115件成功。
+
 ## 0.1.2 — 2026-09-19
 
 ポート競合への対応。
