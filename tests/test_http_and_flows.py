@@ -67,6 +67,18 @@ class HTTP(unittest.TestCase):
     def test_export_import_shape(self):
         exported = c.require_api(self.base, '/api/v1/configs/export', token='fixture-token')
         self.assertEqual(c.require_api(self.base, '/api/v1/configs/import', {'config': exported}, token='fixture-token'), exported)
+    def test_admin_users_endpoints_fixture(self):
+        listed = c.require_api(self.base, '/api/v1/users/?page=1', token='fixture-token')
+        self.assertEqual(listed['total'], 2); self.assertEqual(listed['users'][1]['role'], 'user')
+        code, body, _ = c.api(self.base, '/api/v1/auths/add',
+                              {'name': 'N', 'email': 'n@x.test', 'password': 'secret-1', 'role': 'user'},
+                              token='fixture-token')
+        self.assertEqual(code, 200); self.assertEqual(body['role'], 'user')
+    def test_admin_endpoints_reject_without_token(self):
+        code, _, _ = c.api(self.base, '/api/v1/users/?page=1')
+        self.assertEqual(code, 401)
+        code, _, _ = c.api(self.base, '/api/v1/auths/add', {'name': 'x', 'email': 'x@y.test', 'password': 'z', 'role': 'user'})
+        self.assertEqual(code, 403)
     def test_redirect_blocked(self):
         with self.assertRaises(c.SafetyError): c.api(self.base, '/redirect', token='fixture-token')
     def test_external_http_rejected(self):
@@ -206,6 +218,30 @@ class Flows(unittest.TestCase):
             app.list_users()
         out = stream.getvalue()
         self.assertIn('t@x.test', out); self.assertIn('admin', out); self.assertIn('2', out)
+    def test_list_users_paginates(self):
+        pages = {
+            '/api/v1/users/?page=1': {'users': [{'name': 'A', 'email': 'a@x.test', 'role': 'admin'}], 'total': 2},
+            '/api/v1/users/?page=2': {'users': [{'name': 'B', 'email': 'b@x.test', 'role': 'user'}], 'total': 2}}
+        def fake(base, path, **kw):
+            if path == '/api/config': return GOOD_AUTH
+            if path in pages: return pages[path]
+            raise AssertionError(path)
+        stream = io.StringIO()
+        with patch.object(app, 'require_api', side_effect=fake), contextlib.redirect_stdout(stream):
+            app.list_users()
+        self.assertIn('b@x.test', stream.getvalue())
+    def test_list_users_rejects_bad_responses(self):
+        for bad in ({'users': 'notalist', 'total': 1}, {'users': [], 'total': 2},
+                    {'users': [{'name': 'A'}], 'total': 'x'}, {'users': [{'name': 'A'}], 'total': None}):
+            with self.subTest(bad=bad), patch.object(app, 'require_api',
+                    side_effect=lambda base, path, _bad=bad, **kw: GOOD_AUTH if path == '/api/config' else _bad), \
+                 self.assertRaises(c.SafetyError):
+                app.list_users()
+    def test_list_users_rejects_non_dict_entry(self):
+        with patch.object(app, 'require_api', side_effect=lambda base, path, **kw: (
+                GOOD_AUTH if path == '/api/config' else {'users': [{'name': 'A'}, 'oops'], 'total': 2})), \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(c.SafetyError):
+            app.list_users()
 
 
 class PortFallback(unittest.TestCase):

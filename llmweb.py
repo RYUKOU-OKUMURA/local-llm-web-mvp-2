@@ -653,12 +653,17 @@ def list_users(_args=None) -> None:
             result = require_api(base, f'/api/v1/users/?page={page}', token=token)
             if not isinstance(result, dict) or not isinstance(result.get('users'), list):
                 raise SafetyError('利用者一覧の応答形式が不明です。')
-            users.extend(result['users']); total = result.get('total', len(users)); page += 1
+            batch = result['users']
+            new_total = result.get('total', len(users) + len(batch))
+            if not batch or not isinstance(new_total, int) or isinstance(new_total, bool):
+                raise SafetyError('利用者一覧の応答形式が不明です。')
+            users.extend(batch); total = new_total; page += 1
         del token
     for u in users:
-        if isinstance(u, dict):
-            print(f"- {u.get('name')} <{u.get('email')}> role={u.get('role')}")
-    print(f'登録済み {total} アカウント（role=adminが管理者）')
+        if not isinstance(u, dict):
+            raise SafetyError('利用者一覧の応答形式が不明です。')
+        print(f"- {u.get('name')} <{u.get('email')}> role={u.get('role')}")
+    print(f'登録済み {total if total is not None else 0} アカウント（role=adminが管理者）')
 
 
 def doctor(_args=None) -> None:
