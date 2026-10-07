@@ -74,7 +74,7 @@ bash ./llmweb install --web-port 3002 --https-port 9443 \
 
 導入済みの状態で`install`を繰り返しても上書き更新はしません。別版への更新、既存DATA_DIRの移植、モデル保存先の変更は自動化対象外です。
 
-複数人で使う導入では、同時生成数・同時ロード数・文脈長を`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`で指定できます（既定は単一人向けの1/1/4096）。値を上げるとメモリ使用量が増えるため、実機で余裕を測定してから決めてください。利用者の追加は導入後に`bash ./llmweb add-user`で行います（公開登録は開きません）。
+複数人で使う導入では、同時生成数・同時ロード数・文脈長を`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`で指定できます（既定は単一人向けの1/1/4096。`--ollama-mode managed`時のみ有効）。値を上げるとメモリ使用量が増えるため、実機で余裕を測定してから決めてください。利用者の追加は導入後に`bash ./llmweb add-user`で行います（公開登録は開きません）。
 
 ### 2. Ollamaを起動し、試験用モデルを取得
 

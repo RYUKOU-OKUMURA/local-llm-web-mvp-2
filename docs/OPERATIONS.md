@@ -110,9 +110,11 @@ bash ./llmweb list-users
 
 `secure`完了後（https運用中）のみ実行できます。HTTPS自動起動ガードは「管理者が1名以上」を確認するため、招待利用者が増えても起動は阻害されませんが、管理者が全員いないDBは初期管理者画面の再公開を防ぐため起動を拒否します。
 
-### 8.1 同時利用の資源値
+### 8.1 同時利用の資源値（Ollama管理モードのみ）
 
-並列数・同時ロード数・文脈長は`install`の`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`で決まります（既定1/1/4096）。稼働後に変える場合は、停止中に`config/state.json`の`ollama_parallel`等3キーと`config/ollama.env`の値を**一致させて**編集してください。片方だけの変更は起動前の整合確認で停止します。値を上げるとKVキャッシュ×文脈長のメモリが並列数分だけ増えます。`--ollama-max-models 2`は埋め込みとチャットモデルの入替待ちを減らす一方、常駐メモリが増えます。変更前後で応答時間とメモリプレッシャーを実測し、OpenClawの動作を損なわない範囲で調整してください。
+並列数・同時ロード数・文脈長は`install`の`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`で決まります（既定1/1/4096、許容範囲はそれぞれ1〜16 / 1〜8 / 1024〜131072）。**この節の手順は`--ollama-mode managed`（本パッケージがOllamaをLaunchAgentで管理する導入）だけに適用**されます。`--ollama-mode existing`では`config/ollama.env`を生成せず起動前の整合確認も走らないため、資源値の変更は既存Ollama側の設定として行い、本ツールのstateへは記録しません。
+
+稼働後に変える場合は、停止中に`config/state.json`の`ollama_parallel`等3キーと`config/ollama.env`の値を**一致させて**編集してください。片方だけの変更は起動前の整合確認で停止します。値を上げるとKVキャッシュ×文脈長のメモリが並列数分だけ増えます。`--ollama-max-models 2`は埋め込みとチャットモデルの入替待ちを減らす一方、常駐メモリが増えます。変更前後で応答時間とメモリプレッシャーを実測し、OpenClawの動作を損なわない範囲で調整してください。
 
 ## 9. よくある停止理由
 
