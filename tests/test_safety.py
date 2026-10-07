@@ -41,6 +41,12 @@ class Parameters(unittest.TestCase):
         for tag in ('gpt-oss:120b-cloud', 'MODEL:Cloud', 'https://example.com/model', '../x', 'x;touch /tmp/y', 'x$(id)'):
             with self.subTest(tag=tag), self.assertRaises(c.SafetyError): c.model_tag(tag)
     def test_ports(self): c.validate_ports(3000, 8443)
+    def test_ollama_resource_bounds(self):
+        c.validate_ollama_resources(1, 1, 4096); c.validate_ollama_resources(16, 8, 131072)
+        for args in ((0, 1, 4096), (17, 1, 4096), (1, 0, 4096), (1, 9, 4096),
+                     (1, 1, 1023), (1, 1, 131073), (1.5, 1, 4096), (1, 1, '4096')):
+            with self.subTest(args=args), self.assertRaises(c.SafetyError):
+                c.validate_ollama_resources(*args)
     def test_protected_ports(self):
         for ports in ((3000, 443), (11434, 8443), (18789, 8443), (3000, 3000), (0, 8443), (3000, 65536)):
             with self.subTest(ports=ports), self.assertRaises(c.SafetyError): c.validate_ports(*ports)
@@ -120,9 +126,22 @@ class Policy(unittest.TestCase):
             with self.subTest(key=key): self.assertIs(policy[key], False)
         self.assertEqual(policy['TOOL_SERVER_CONNECTIONS'], [])
     def test_ollama_no_cloud_and_single_load(self):
-        env = c.ollama_env()
+        env = c.ollama_env(STATE)
         self.assertEqual(env['OLLAMA_NO_CLOUD'], '1'); self.assertEqual(env['OLLAMA_HOST'], '127.0.0.1:11434')
         self.assertEqual(env['OLLAMA_NUM_PARALLEL'], '1'); self.assertEqual(env['OLLAMA_MAX_LOADED_MODELS'], '1')
+        self.assertEqual(env['OLLAMA_CONTEXT_LENGTH'], '4096')
+    def test_ollama_custom_resources(self):
+        env = c.ollama_env(dict(STATE, ollama_parallel=4, ollama_max_models=2, ollama_context_length=8192))
+        self.assertEqual(env['OLLAMA_NUM_PARALLEL'], '4')
+        self.assertEqual(env['OLLAMA_MAX_LOADED_MODELS'], '2')
+        self.assertEqual(env['OLLAMA_CONTEXT_LENGTH'], '8192')
+    def test_ollama_invalid_resources_rejected(self):
+        for overrides in ({'ollama_parallel': 0}, {'ollama_parallel': 17}, {'ollama_parallel': '4'},
+                          {'ollama_max_models': 0}, {'ollama_max_models': 9},
+                          {'ollama_context_length': 512}, {'ollama_context_length': 131073},
+                          {'ollama_parallel': True}):
+            with self.subTest(overrides=overrides), self.assertRaises(c.SafetyError):
+                c.ollama_env(dict(STATE, **overrides))
     def test_inherited_secrets_not_forwarded(self):
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'DO-NOT-PASS', 'HTTP_PROXY': 'http://bad', 'PYTHONPATH': '/unsafe'}):
             env = c.clean_env({'ONLY': 'x'})

@@ -25,7 +25,7 @@ from pathlib import Path
 
 from core import (
     PROJECT, PACKAGE_VERSION, OPENWEBUI_VERSION, ROOT, OLLAMA_URL, LABELS,
-    SafetyError, version, model_tag, validate_ports, fqdn_from_status,
+    SafetyError, version, model_tag, validate_ports, validate_ollama_resources, fqdn_from_status,
     private, atomic_write, write_json, read_json, write_env, read_env,
     policy, REQUIRED_KEYS, web_env, ollama_env, clean_env, extract_config_keys,
     updated_config, assert_config, normalized, port_references, expected_route,
@@ -147,6 +147,8 @@ def load_state(installed=True) -> dict:
         raise SafetyError('不正なOllama管理モードです。')
     if state.get('phase') not in ('local', 'https'):
         raise SafetyError('不正な導入フェーズです。')
+    validate_ollama_resources(state.get('ollama_parallel', 1), state.get('ollama_max_models', 1),
+                              state.get('ollama_context_length', 4096))
     return state
 
 
@@ -231,6 +233,7 @@ def install(args) -> None:
     bins = binaries()
     fqdn = fqdn_from_status(ts_json(bins, 'status'))
     validate_ports(args.web_port, args.https_port)
+    validate_ollama_resources(args.ollama_parallel, args.ollama_max_models, args.ollama_context_length)
     version(args.webui_version); model_tag(args.chat_model); model_tag(args.embed_model)
     state = None
     if ROOT.exists():
@@ -244,13 +247,16 @@ def install(args) -> None:
     if web_port != args.web_port or https_port != args.https_port:
         print(f'指定ポートは使用中です。今回の導入は WebUI={web_port}番 / HTTPS={https_port}番 を使います。')
     selected = {'web_port': web_port, 'https_port': https_port, 'webui_version': args.webui_version,
-                'chat_model': args.chat_model, 'embed_model': args.embed_model, 'ollama_mode': args.ollama_mode}
+                'chat_model': args.chat_model, 'embed_model': args.embed_model, 'ollama_mode': args.ollama_mode,
+                'ollama_parallel': args.ollama_parallel, 'ollama_max_models': args.ollama_max_models,
+                'ollama_context_length': args.ollama_context_length}
     if state is not None:
         if (ROOT / 'data/webui.db').exists():
             raise SafetyError('未完了の導入に既存DBがあります。上書きせず調査してください。')
         for key, val in selected.items():
-            if state[key] != val:
+            if state.get(key, val) != val:
                 raise SafetyError('途中導入の値と指定が違います。同じ指定で再試行してください。')
+        state.update(selected)
         if state['fqdn'] != fqdn:
             raise SafetyError('Tailscaleホスト名が変わっています。導入を再開しません。')
     else:
@@ -282,7 +288,7 @@ def install(args) -> None:
         if not (ROOT / 'config/webui.env').exists():
             write_env(ROOT / 'config/webui.env', web_env(ROOT, state, secrets.token_hex(32), True))
         if state['ollama_mode'] == 'managed':
-            write_env(ROOT / 'config/ollama.env', ollama_env())
+            write_env(ROOT / 'config/ollama.env', ollama_env(state))
         uv = state['uv_bin']
         # Resolve dependencies on the actual Mac; never ship a Linux lock as a Mac lock.
         command([uv, 'python', 'install', '3.11'], capture=False, timeout=None)
@@ -451,7 +457,7 @@ def pull_models(args) -> None:
         start_service(state, 'ollama')
         confirm(f'モデル {state["chat_model"]} と {state["embed_model"]} を取得します。ネット通信とディスク容量を使います。', yes=args.yes)
         for tag in (state['chat_model'], state['embed_model']):
-            command([state['ollama_bin'], 'pull', tag], capture=False, timeout=None, env=clean_env(ollama_env()))
+            command([state['ollama_bin'], 'pull', tag], capture=False, timeout=None, env=clean_env(ollama_env(state)))
         models_ready(state)
     print('ローカルモデルを取得・識別記録しました。速度と日本語文書の品質は未評価です。')
 
@@ -608,7 +614,12 @@ def doctor(_args=None) -> None:
     errors = []
     for service in ('ollama', 'webui'):
         try:
-            ensure_running(state, service); print(f'OK {service}: ' + ('既存プロセス / IPv4 loopback' if service == 'ollama' and state.get('ollama_mode') == 'existing' else '専用PID / IPv4 loopback'))
+            ensure_running(state, service)
+            detail = '既存プロセス / IPv4 loopback' if service == 'ollama' and state.get('ollama_mode') == 'existing' else '専用PID / IPv4 loopback'
+            if service == 'ollama' and state.get('ollama_mode', 'managed') == 'managed':
+                env = read_env(ROOT / 'config/ollama.env')
+                detail += ' / parallel=' + env.get('OLLAMA_NUM_PARALLEL', '?') + ' models=' + env.get('OLLAMA_MAX_LOADED_MODELS', '?') + ' ctx=' + env.get('OLLAMA_CONTEXT_LENGTH', '?')
+            print(f'OK {service}: ' + detail)
         except SafetyError as exc:
             errors.append(str(exc)); print('NG ' + str(exc))
     base = f'http://127.0.0.1:{state["web_port"]}'
@@ -703,6 +714,9 @@ def build_parser():
     p.add_argument('--chat-model', default='qwen3:4b')
     p.add_argument('--embed-model', default='bge-m3:latest')
     p.add_argument('--ollama-mode', choices=('managed', 'existing'), default='managed', help='existingは既に安全に起動中のOllamaを再利用し、本ツールでは停止しません')
+    p.add_argument('--ollama-parallel', type=int, default=1, help='同時生成の上限。複数人利用では実機メモリ測定後に増やす（既定1）')
+    p.add_argument('--ollama-max-models', type=int, default=1, help='メモリへ同時ロードするモデル数（既定1）')
+    p.add_argument('--ollama-context-length', type=int, default=4096, help='Ollama既定の文脈長（既定4096）')
     p.add_argument('--yes', action='store_true')
     for name in ('start', 'stop'):
         p = sub.add_parser(name)

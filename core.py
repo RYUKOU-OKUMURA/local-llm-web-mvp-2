@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 PROJECT = 'local-llm-web'
-PACKAGE_VERSION = '0.1.2'
+PACKAGE_VERSION = '0.1.3'
 OPENWEBUI_VERSION = '0.11.3'  # PyPI listing checked 2026-09-16; not Mac-certified.
 ROOT = Path.home() / 'Library' / 'Application Support' / PROJECT
 OLLAMA_URL = 'http://127.0.0.1:11434'
@@ -50,6 +50,20 @@ def validate_ports(web: int, https: int) -> None:
         raise SafetyError('新規ポートは1024〜65535で指定してください。')
     if web == https or {web, https} & {11434, 18789}:
         raise SafetyError('Ollama・OpenClaw・新規入口同士のポートを重ねないでください。')
+
+
+def validate_ollama_resources(parallel: int, max_models: int, context_length: int) -> None:
+    values = {'OLLAMA_NUM_PARALLEL': parallel, 'OLLAMA_MAX_LOADED_MODELS': max_models,
+              'OLLAMA_CONTEXT_LENGTH': context_length}
+    for name, value in values.items():
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise SafetyError(f'{name}は整数で指定してください。')
+    if not 1 <= parallel <= 16:
+        raise SafetyError('OLLAMA_NUM_PARALLELは1〜16で指定してください。')
+    if not 1 <= max_models <= 8:
+        raise SafetyError('OLLAMA_MAX_LOADED_MODELSは1〜8で指定してください。')
+    if not 1024 <= context_length <= 131072:
+        raise SafetyError('OLLAMA_CONTEXT_LENGTHは1024〜131072で指定してください。')
 
 
 def fqdn_from_status(status: dict) -> str:
@@ -204,10 +218,15 @@ def web_env(root: Path, state: dict, secret: str, local: bool) -> dict[str, str]
     return env
 
 
-def ollama_env() -> dict[str, str]:
+def ollama_env(state: dict) -> dict[str, str]:
+    parallel = state.get('ollama_parallel', 1)
+    max_models = state.get('ollama_max_models', 1)
+    context_length = state.get('ollama_context_length', 4096)
+    validate_ollama_resources(parallel, max_models, context_length)
     return {'OLLAMA_HOST': '127.0.0.1:11434', 'OLLAMA_NO_CLOUD': '1',
-            'OLLAMA_NUM_PARALLEL': '1', 'OLLAMA_MAX_LOADED_MODELS': '1',
-            'OLLAMA_CONTEXT_LENGTH': '4096'}
+            'OLLAMA_NUM_PARALLEL': str(parallel),
+            'OLLAMA_MAX_LOADED_MODELS': str(max_models),
+            'OLLAMA_CONTEXT_LENGTH': str(context_length)}
 
 
 def clean_env(extra: dict[str, str]) -> dict[str, str]:
@@ -464,7 +483,7 @@ def run_service(root: Path, service: str) -> None:
     state = read_json(root / 'config' / 'state.json')
     env = read_env(root / 'config' / f'{service}.env')
     if service == 'ollama':
-        if env != ollama_env():
+        if env != ollama_env(state):
             raise SafetyError('Ollamaの安全設定が変更されています。起動を停止します。')
         command = [state['ollama_bin'], 'serve']
     elif service == 'webui':

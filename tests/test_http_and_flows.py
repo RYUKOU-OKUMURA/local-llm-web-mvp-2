@@ -77,7 +77,7 @@ class Flows(unittest.TestCase):
         self.state = copy.deepcopy(STATE)
         c.write_json(self.root / 'config/state.json', self.state)
         c.write_env(self.root / 'config/webui.env', c.web_env(self.root, self.state, 'z' * 64, False))
-        c.write_env(self.root / 'config/ollama.env', c.ollama_env())
+        c.write_env(self.root / 'config/ollama.env', c.ollama_env(self.state))
         mapping = {k: 'fixture.' + k for k in c.policy(self.state)}
         c.write_json(self.root / 'config/config-key-map.json', mapping)
         self.mapping = mapping
