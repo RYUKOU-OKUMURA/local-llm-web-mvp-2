@@ -253,8 +253,11 @@ def install(args) -> None:
     if state is not None:
         if (ROOT / 'data/webui.db').exists():
             raise SafetyError('未完了の導入に既存DBがあります。上書きせず調査してください。')
+        # 新キー（0.1.3で追加）のみ既存stateを未記録で許容し、古いキーは従来通り厳格照合
+        new_keys = ('ollama_parallel', 'ollama_max_models', 'ollama_context_length')
         for key, val in selected.items():
-            if state.get(key, val) != val:
+            stored = state.get(key, val) if key in new_keys else state.get(key)
+            if stored != val:
                 raise SafetyError('途中導入の値と指定が違います。同じ指定で再試行してください。')
         state.update(selected)
         if state['fqdn'] != fqdn:
@@ -467,7 +470,8 @@ def smoke(_args=None) -> None:
     start_time = time.monotonic()
     reply = require_api(OLLAMA_URL, '/api/chat', {
         'model': state['chat_model'], 'messages': [{'role': 'user', 'content': '日本語で「接続テストに成功しました」とだけ返してください。'}],
-        'stream': False, 'think': False, 'options': {'num_ctx': 4096, 'num_predict': 128}}, timeout=600)
+        'stream': False, 'think': False,
+        'options': {'num_ctx': state.get('ollama_context_length', 4096), 'num_predict': 128}}, timeout=600)
     text = reply.get('message', {}).get('content', '')
     if not isinstance(text, str) or not text.strip():
         raise SafetyError('チャットの本文が空です。モデル出力を確認してください。')
@@ -714,9 +718,9 @@ def build_parser():
     p.add_argument('--chat-model', default='qwen3:4b')
     p.add_argument('--embed-model', default='bge-m3:latest')
     p.add_argument('--ollama-mode', choices=('managed', 'existing'), default='managed', help='existingは既に安全に起動中のOllamaを再利用し、本ツールでは停止しません')
-    p.add_argument('--ollama-parallel', type=int, default=1, help='同時生成の上限。複数人利用では実機メモリ測定後に増やす（既定1）')
-    p.add_argument('--ollama-max-models', type=int, default=1, help='メモリへ同時ロードするモデル数（既定1）')
-    p.add_argument('--ollama-context-length', type=int, default=4096, help='Ollama既定の文脈長（既定4096）')
+    p.add_argument('--ollama-parallel', type=int, default=1, help='同時生成の上限。複数人利用では実機メモリ測定後に増やす（既定1。managedモードのみ有効）')
+    p.add_argument('--ollama-max-models', type=int, default=1, help='メモリへ同時ロードするモデル数（既定1。managedモードのみ有効）')
+    p.add_argument('--ollama-context-length', type=int, default=4096, help='Ollama既定の文脈長（既定4096。managedモードのみ有効）')
     p.add_argument('--yes', action='store_true')
     for name in ('start', 'stop'):
         p = sub.add_parser(name)
