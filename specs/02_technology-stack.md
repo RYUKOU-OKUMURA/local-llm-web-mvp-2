@@ -34,8 +34,8 @@ status: "採用構成の仕様化／実機導入・受け入れ試験は未実�
 | ファイル保存 | Mac miniのローカルファイルシステム | 添付文書・アプリデータ | DATA_DIRを絶対パスで固定 |
 | ネットワーク | 既存Tailscale | 端末とMac mini間の到達経路 | 既存Tailnetと既存アカウントを流用 |
 | HTTPS入口 | Tailscale Serve | Tailnet内HTTPSとリバースプロキシ | 新規9443番からWebUIへ。443番は維持 |
-| 認証 | Open WebUI標準アカウント | WebUI利用者認証 | 管理者＋招待ユーザーの複数アカウント。公開登録は開かずSSOは使わない |
-| 利用者管理 | Open WebUI管理API | 招待ユーザーの作成・一覧 | `llmweb add-user` / `list-users`。role=userのみ |
+| 認証 | Open WebUI標準アカウント | WebUI利用者認証 | 管理者＋招待利用者の複数アカウント。公開登録は開かずSSOは使わない |
+| 利用者管理 | Open WebUI管理API | 招待利用者の作成・一覧 | `llmweb add-user` / `list-users`。role=userのみ |
 | 起動管理 | macOS launchd / LaunchAgent | ログイン後起動・異常終了時の再起動 | 本プロジェクト専用の2ジョブ |
 | ログ・保守 | ローカルログ、構成記録、停止中バックアップ | 切り分けと復元 | 新規監視サーバー・バックアップ製品は導入しない |
 
@@ -245,9 +245,9 @@ Open WebUI公式は、不要なコード実行の停止、Functions/Toolsへの�
 # config/ollama.env — 専用LaunchAgentが起動するプロセスへ渡す。
 OLLAMA_HOST='127.0.0.1:11434'
 OLLAMA_NO_CLOUD=1
-OLLAMA_NUM_PARALLEL=<install指定値。既定1>
-OLLAMA_MAX_LOADED_MODELS=<install指定値。既定1>
-OLLAMA_CONTEXT_LENGTH=<install指定値。既定4096>
+OLLAMA_NUM_PARALLEL='<install指定値。既定1>'
+OLLAMA_MAX_LOADED_MODELS='<install指定値。既定1>'
+OLLAMA_CONTEXT_LENGTH='<install指定値。既定4096>'
 ```
 
 loopback待受とクラウド機能停止は必須。並列数・同時ロード数・文脈長は`install`の`--ollama-parallel` / `--ollama-max-models` / `--ollama-context-length`で指定する**資源制御用設計値**であり、既定は従来の単一人向け値。複数人利用では利用者数・メモリ余裕を実機測定してから引き上げる。性能保証や全モデル共通の最適値ではない。[OL-02]
